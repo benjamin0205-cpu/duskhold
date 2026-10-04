@@ -1,0 +1,509 @@
+// Low-poly models built from primitives, plus the static world (ground, trees, town).
+import * as THREE from 'three';
+import { zoneAt, roadDist, TOWN_R, BOSS_ARENA, NPCS } from '../sim.js';
+
+// ---------------------------------------------------------------- helpers
+const C = (c) => new THREE.Color(c);
+export function M(color, o = {}) {
+  return new THREE.MeshStandardMaterial({ color, roughness: o.r ?? 0.85, metalness: o.m ?? 0, flatShading: o.flat ?? true, emissive: o.e ?? 0x000000, emissiveIntensity: o.ei ?? 1, transparent: !!o.t, opacity: o.op ?? 1, side: o.side ?? THREE.FrontSide });
+}
+function mesh(geo, mat, x = 0, y = 0, z = 0) { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; }
+// merge non-indexed geometries, painting each part with a vertex colour
+function part(geo, color, mtx) {
+  const g = geo.index ? geo.toNonIndexed() : geo.clone();
+  if (mtx) g.applyMatrix4(mtx);
+  const n = g.attributes.position.count; const col = new Float32Array(n * 3); const c = C(color);
+  for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.deleteAttribute('uv');
+  return g;
+}
+function merge(parts) {
+  let n = 0; for (const p of parts) n += p.attributes.position.count;
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  let o = 0;
+  for (const p of parts) { pos.set(p.attributes.position.array, o * 3); nor.set(p.attributes.normal.array, o * 3); col.set(p.attributes.color.array, o * 3); o += p.attributes.position.count; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.computeBoundingSphere();
+  return g;
+}
+const T = (x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
+function prism(w, h, d) { // triangular roof prism, ridge along x
+  const g = new THREE.BufferGeometry();
+  const hw = w / 2, hd = d / 2;
+  const v = [
+    -hw, 0, hd, hw, 0, hd, hw, h, 0, -hw, 0, hd, hw, h, 0, -hw, h, 0,
+    hw, 0, -hd, -hw, 0, -hd, -hw, h, 0, hw, 0, -hd, -hw, h, 0, hw, h, 0,
+    -hw, 0, -hd, -hw, 0, hd, -hw, h, 0, hw, 0, hd, hw, 0, -hd, hw, h, 0,
+  ];
+  g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+// soft round glow texture shared by sprites
+let glowTex = null;
+export function glowTexture() {
+  if (glowTex) return glowTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'); const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,.6)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  glowTex = new THREE.CanvasTexture(c);
+  return glowTex;
+}
+export function glowSprite(color, size, opacity = 1) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false }));
+  s.scale.set(size, size, 1);
+  return s;
+}
+
+// ---------------------------------------------------------------- ground colours
+function hash(x, z) { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, z) {
+  const xi = Math.floor(x), zi = Math.floor(z), xf = x - xi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = zf * zf * (3 - 2 * zf);
+  const a = hash(xi, zi), b = hash(xi + 1, zi), c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+const ZCOL = { meadow: C('#3f6034'), thorn: C('#2a4128'), grave: C('#4a4554'), crypt: C('#3d3a31') };
+const ZCOL2 = { meadow: C('#5c723e'), thorn: C('#394a26'), grave: C('#585164'), crypt: C('#4b463a') };
+const DIRT = C('#6b5640'), COBBLE = C('#6a625a'), TOWNG = C('#4f5a36'), FLAG = C('#3a3638'), CLIFF = C('#2c2830');
+const ZC_ANG = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2 };
+function angd(a, b) { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return Math.abs(d); }
+const tmpA = new THREE.Color(), tmpB = new THREE.Color();
+export function groundColor(x, z, out) {
+  const r = Math.hypot(x, z), a = Math.atan2(z, x);
+  // blend the two nearest zones across their border
+  let best = null, second = null, bd = 9, sd = 9;
+  for (const k in ZC_ANG) { const d = angd(a, ZC_ANG[k]); if (d < bd) { second = best; sd = bd; best = k; bd = d; } else if (d < sd) { second = k; sd = d; } }
+  const n = vnoise(x * 0.08, z * 0.08) * 0.65 + vnoise(x * 0.3, z * 0.3) * 0.35;
+  tmpA.copy(ZCOL[best]).lerp(ZCOL2[best], n);
+  tmpB.copy(ZCOL[second]).lerp(ZCOL2[second], n);
+  const edge = (sd - bd) / 0.25;
+  out.copy(tmpA);
+  if (edge < 1) out.lerp(tmpB, 0.5 * (1 - edge));
+  // town
+  if (r < TOWN_R + 3) out.lerp(TOWNG, Math.min(1, (TOWN_R + 3 - r) / 4));
+  if (r < 10) out.copy(COBBLE).multiplyScalar(0.85 + vnoise(x * 1.2, z * 1.2) * 0.3);
+  // roads
+  const rd = r < 10 ? 99 : roadDist(x, z);
+  const inTownRoad = r < TOWN_R + 2 && (Math.abs(x) < 2.6 || Math.abs(z) < 2.6);
+  if (rd < 3.2 || inTownRoad) out.lerp(DIRT, inTownRoad ? 0.85 : Math.min(1, (3.2 - rd) / 1.2) * (0.75 + 0.25 * n));
+  // boss arena
+  const ar = Math.hypot(x - BOSS_ARENA.x, z - BOSS_ARENA.z);
+  if (ar < BOSS_ARENA.r + 1) out.lerp(FLAG, Math.min(1, (BOSS_ARENA.r + 1 - ar) / 2)).multiplyScalar(0.9 + 0.2 * vnoise(x * 0.9, z * 0.9));
+  if (r > 132) out.lerp(CLIFF, Math.min(1, (r - 132) / 8));
+  out.multiplyScalar(0.9 + hash(Math.floor(x * 2), Math.floor(z * 2)) * 0.12);
+  return out;
+}
+
+// ---------------------------------------------------------------- the world
+// Instanced meshes split into map chunks, so frustum culling skips what is off screen.
+const CHUNK = 36;
+function chunked(scene, geo, mat, items, place, opts = {}) {
+  const groups = new Map();
+  for (const it of items) { const k = Math.floor(it.x / CHUNK) + ':' + Math.floor(it.z / CHUNK); let a = groups.get(k); if (!a) groups.set(k, (a = [])); a.push(it); }
+  const d3 = new THREE.Object3D(), col = new THREE.Color();
+  for (const list of groups.values()) {
+    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((it, i) => { place(it, d3, col); d3.updateMatrix(); im.setMatrixAt(i, d3.matrix); im.setColorAt(i, col); });
+    im.castShadow = !!opts.cast; im.receiveShadow = true;
+    im.computeBoundingSphere();
+    scene.add(im);
+  }
+}
+export function buildWorld(scene, world) {
+  const out = { flames: [], lights: [], emitters: [], water: null, markers: {}, buildings: [] };
+  // ground, in tiles so the camera only draws what it can see
+  const dc = document.createElement('canvas'); dc.width = dc.height = 128; const dx = dc.getContext('2d');
+  const img = dx.createImageData(128, 128);
+  for (let i = 0; i < 128 * 128; i++) { const v = 200 + Math.random() * 55; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255; }
+  dx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(dc); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+  const groundMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex });
+  const TILE = 40, TSEG = 26, c = new THREE.Color();
+  for (let tz = -4; tz < 4; tz++) for (let tx = -4; tx < 4; tx++) {
+    const geo = new THREE.PlaneGeometry(TILE, TILE, TSEG, TSEG); geo.rotateX(-Math.PI / 2);
+    geo.translate(tx * TILE + TILE / 2, 0, tz * TILE + TILE / 2);
+    const pos = geo.attributes.position; const col = new Float32Array(pos.count * 3);
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      groundColor(pos.getX(i), pos.getZ(i), c); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      uv.setXY(i, pos.getX(i) / 3, pos.getZ(i) / 3);
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.computeBoundingSphere();
+    const tile = new THREE.Mesh(geo, groundMat); tile.receiveShadow = true; scene.add(tile);
+  }
+
+  // instanced scenery
+  const KIND = {
+    oak: merge([part(new THREE.CylinderGeometry(0.16, 0.26, 1.7, 6), '#4a3424', T(0, 0.85, 0)), part(new THREE.IcosahedronGeometry(1.25, 0), '#476f2e', T(0, 2.45, 0, 0, 0, 0, 1.1, 0.85, 1.1)), part(new THREE.IcosahedronGeometry(0.85, 0), '#557d34', T(0.5, 3.0, 0.2))]),
+    pine: merge([part(new THREE.CylinderGeometry(0.12, 0.2, 1.2, 5), '#4a3424', T(0, 0.6, 0)), part(new THREE.ConeGeometry(1.15, 1.9, 7), '#2f5a36', T(0, 1.75, 0)), part(new THREE.ConeGeometry(0.85, 1.6, 7), '#36663c', T(0, 2.7, 0)), part(new THREE.ConeGeometry(0.5, 1.3, 7), '#3f7244', T(0, 3.55, 0))]),
+    deadtree: merge([part(new THREE.CylinderGeometry(0.1, 0.22, 2.6, 5), '#4a4038', T(0, 1.3, 0, 0, 0, 0.08)), part(new THREE.CylinderGeometry(0.05, 0.09, 1.2, 4), '#4a4038', T(0.35, 2.0, 0, 0, 0, -0.9)), part(new THREE.CylinderGeometry(0.04, 0.08, 1.0, 4), '#4a4038', T(-0.3, 2.3, 0.1, 0.3, 0, 0.8)), part(new THREE.CylinderGeometry(0.04, 0.07, 0.8, 4), '#4a4038', T(0, 2.5, -0.3, -0.8, 0, 0))]),
+    rock: merge([part(new THREE.DodecahedronGeometry(1, 0), '#6e6a66', T(0, 0.3, 0, 0, 0, 0, 1, 0.72, 0.9))]),
+    grave: merge([part(new THREE.BoxGeometry(0.62, 0.95, 0.18), '#77727c', T(0, 0.47, 0)), part(new THREE.CylinderGeometry(0.31, 0.31, 0.18, 8, 1, false, 0, Math.PI), '#77727c', T(0, 0.95, 0, Math.PI / 2, 0, Math.PI / 2)), part(new THREE.BoxGeometry(0.8, 0.12, 0.4), '#5a5660', T(0, 0.06, 0)), part(new THREE.BoxGeometry(0.55, 0.06, 1.0), '#3b3530', T(0, 0.03, 0.62))]),
+    ruin: merge([part(new THREE.CylinderGeometry(0.5, 0.58, 2.2, 8), '#7a7466', T(0, 1.1, 0, 0.05, 0, 0.04)), part(new THREE.BoxGeometry(1.4, 0.3, 1.4), '#6a645a', T(0, 0.15, 0)), part(new THREE.BoxGeometry(0.5, 0.4, 0.6), '#7a7466', T(0.9, 0.2, 0.5, 0.2, 0.6, 0.3))]),
+    cliff: merge([part(new THREE.DodecahedronGeometry(1, 0), '#3a3540', T(0, 0.5, 0, 0, 0, 0, 1, 1.5, 1)), part(new THREE.DodecahedronGeometry(0.6, 0), '#45404a', T(0.6, 1.4, 0.2))]),
+    tent: merge([part(new THREE.ConeGeometry(1.7, 2.3, 4), '#7c5a3a', T(0, 1.15, 0, 0, Math.PI / 4, 0)), part(new THREE.CylinderGeometry(0.05, 0.05, 2.8, 4), '#3a2a1c', T(0, 1.4, 0)), part(new THREE.BoxGeometry(0.7, 1.2, 0.05), '#24180f', T(0, 0.6, 1.0))]),
+    crypt: merge([part(new THREE.BoxGeometry(3.6, 2.4, 2.8), '#8a8494', T(0, 1.2, 0)), part(prism(4.0, 1.1, 3.2), '#5a5464', T(0, 2.4, 0)), part(new THREE.BoxGeometry(1.0, 1.6, 0.1), '#14101a', T(0, 0.8, 1.42)), part(new THREE.BoxGeometry(4, 0.25, 3.2), '#4a4652', T(0, 0.12, 0))]),
+    post: merge([part(new THREE.CylinderGeometry(0.24, 0.27, 1, 6), '#5a4130', T(0, 0.5, 0)), part(new THREE.ConeGeometry(0.24, 0.35, 6), '#4a3526', T(0, 1.17, 0))]),
+    tower: merge([part(new THREE.CylinderGeometry(1.0, 1.15, 4.2, 8), '#5f4a36', T(0, 2.1, 0)), part(new THREE.CylinderGeometry(1.25, 1.25, 0.35, 8), '#4a3828', T(0, 4.3, 0)), part(new THREE.ConeGeometry(1.45, 1.7, 8), '#6e2f26', T(0, 5.3, 0))]),
+    pillar: merge([part(new THREE.CylinderGeometry(0.75, 0.85, 1, 8), '#6a6458', T(0, 0.5, 0)), part(new THREE.BoxGeometry(1.9, 0.12, 1.9), '#5a5448', T(0, 0.02, 0))]),
+    lamp: merge([part(new THREE.CylinderGeometry(0.07, 0.1, 2.6, 5), '#2a2420', T(0, 1.3, 0)), part(new THREE.BoxGeometry(0.34, 0.42, 0.34), '#ffcf7a', T(0, 2.75, 0)), part(new THREE.ConeGeometry(0.3, 0.25, 4), '#2a2420', T(0, 3.05, 0, 0, Math.PI / 4, 0))]),
+    torch: merge([part(new THREE.CylinderGeometry(0.06, 0.09, 2.2, 5), '#3a2a1c', T(0, 1.1, 0)), part(new THREE.CylinderGeometry(0.18, 0.1, 0.25, 6), '#2a2420', T(0, 2.25, 0))]),
+    brazier: merge([part(new THREE.CylinderGeometry(0.55, 0.3, 0.5, 8), '#2e2a28', T(0, 1.1, 0)), part(new THREE.CylinderGeometry(0.08, 0.12, 0.9, 5), '#2e2a28', T(0, 0.45, 0))]),
+  };
+  const groups = {};
+  for (const o of world.obs) (groups[o.k] = groups[o.k] || []).push(o);
+  for (const k in KIND) {
+    const list = groups[k]; if (!list || !list.length) continue;
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: k === 'lamp' ? 0x553300 : 0x000000 });
+    chunked(scene, KIND[k], mat, list, (o, d3, tint) => {
+      const s = o.s || 1;
+      d3.position.set(o.x, 0, o.z);
+      d3.rotation.set(0, k === 'crypt' ? 0 : (o.rot ?? Math.atan2(o.x, o.z)), 0);
+      if (k === 'post') d3.scale.set(1, o.h || 2.8, 1);
+      else if (k === 'pillar') d3.scale.set(1, o.h || 6, 1);
+      else if (k === 'cliff') d3.scale.set(s, s * 0.9, s);
+      else if (k === 'tower' || k === 'lamp' || k === 'torch' || k === 'brazier' || k === 'tent' || k === 'crypt') d3.scale.set(1, 1, 1);
+      else d3.scale.set(s, s, s);
+      const v = 0.85 + Math.random() * 0.3;
+      tint.setRGB(v, v * (0.95 + Math.random() * 0.1), v);
+    }, { cast: k !== 'cliff' });
+  }
+  // ground cover: grass, flowers, mushrooms, bones (no collision, client only)
+  {
+    let seed = 777; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const COVER = {
+      grass: { geo: merge([part(new THREE.ConeGeometry(0.06, 0.55, 3), '#5f7a3a', T(0, 0.27, 0, 0.15, 0, 0.1)), part(new THREE.ConeGeometry(0.06, 0.45, 3), '#6b8540', T(0.12, 0.22, 0.05, -0.1, 0, -0.25)), part(new THREE.ConeGeometry(0.05, 0.4, 3), '#55703a', T(-0.1, 0.2, -0.05, 0.2, 0, 0.3))]), zones: { meadow: 1900, thorn: 500, grave: 300 } },
+      flower: { geo: merge([part(new THREE.CylinderGeometry(0.015, 0.015, 0.35, 3), '#4a6a30', T(0, 0.17, 0)), part(new THREE.IcosahedronGeometry(0.08, 0), '#ffffff', T(0, 0.37, 0))]), zones: { meadow: 700 }, colors: ['#e8d36a', '#d8a0d8', '#f0f0f0', '#e8b0a0'] },
+      shroom: { geo: merge([part(new THREE.CylinderGeometry(0.05, 0.07, 0.25, 5), '#e8dcc8', T(0, 0.12, 0)), part(new THREE.SphereGeometry(0.16, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2), '#ffffff', T(0, 0.24, 0))]), zones: { thorn: 260, crypt: 60 }, colors: ['#b8402a', '#c8a878', '#a8502a'] },
+      bones: { geo: merge([part(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 4), '#d8d0bc', T(0, 0.05, 0, 0, 0, Math.PI / 2)), part(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 4), '#d8d0bc', T(0.05, 0.05, 0.1, 0, 0.9, Math.PI / 2)), part(new THREE.IcosahedronGeometry(0.11, 0), '#e8e0cc', T(-0.25, 0.1, 0.05))]), zones: { grave: 420, crypt: 360 } },
+      pebble: { geo: merge([part(new THREE.DodecahedronGeometry(0.18, 0), '#6a6660', T(0, 0.06, 0, 0, 0, 0, 1, 0.6, 1))]), zones: { meadow: 200, thorn: 200, grave: 260, crypt: 380 } },
+    };
+    const QA = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2 };
+    for (const k in COVER) {
+      const cv = COVER[k]; const list = [];
+      for (const zn in cv.zones) {
+        let made = 0, tries = 0;
+        while (made < cv.zones[zn] && tries++ < cv.zones[zn] * 6) {
+          const a = QA[zn] + (R() - 0.5) * 1.58, r = Math.sqrt(26 * 26 + R() * (134 * 134 - 26 * 26));
+          const x = Math.cos(a) * r, z = Math.sin(a) * r;
+          if (zoneAt(x, z) !== zn || roadDist(x, z) < 3) continue;
+          if (!world.free(x, z, 0.3, 0.1)) continue;
+          list.push([x, z, zn]); made++;
+        }
+      }
+      // town lawn gets a little grass too
+      if (k === 'grass') for (let i = 0; i < 160; i++) { const a = R() * Math.PI * 2, r = 11 + R() * 9; const x = Math.cos(a) * r, z = Math.sin(a) * r; if (Math.abs(x) > 3 && Math.abs(z) > 3 && world.free(x, z, 0.3, 0.1)) list.push([x, z, 'town']); }
+      const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+      chunked(scene, cv.geo, mat, list.map(([x, z, zn]) => ({ x, z, zn })), (it, d3, c2) => {
+        const s = 0.7 + R() * 0.7;
+        d3.position.set(it.x, 0, it.z); d3.rotation.set(0, R() * Math.PI * 2, 0); d3.scale.set(s, s * (k === 'grass' ? 0.8 + R() * 0.6 : 1), s);
+        const zn = it.zn;
+        if (cv.colors) c2.set(cv.colors[Math.floor(R() * cv.colors.length)]);
+        else if (k === 'grass') c2.setRGB(zn === 'grave' ? 0.65 : zn === 'thorn' ? 0.7 : 0.95, zn === 'grave' ? 0.7 : 0.9 + R() * 0.15, zn === 'grave' ? 0.75 : 0.8);
+        else { const v = 0.8 + R() * 0.3; c2.setRGB(v, v, v); }
+      });
+    }
+  }
+  // flames & lights
+  for (const o of world.obs) {
+    if (o.k === 'torch') { addFlame(scene, out, o.x, 2.55, o.z, 0xff9a3a, 1.1); }
+    if (o.k === 'lamp') out.lights.push({ x: o.x, y: 2.8, z: o.z, color: 0xffc070, power: 0.8 });
+    if (o.k === 'brazier') addFlame(scene, out, o.x, 1.5, o.z, 0x6aff7a, 1.6, 'green');
+    if (o.k === 'campfire') { addCampfire(scene, out, o.x, o.z); }
+  }
+  // town buildings
+  for (const o of world.obs) {
+    if (o.k === 'hall' || o.k === 'house' || o.k === 'inn' || o.k === 'forge') scene.add(building(o, out));
+    if (o.k === 'stall') scene.add(stall(o));
+    if (o.k === 'anvil') { const a = mesh(new THREE.BoxGeometry(0.9, 0.45, 0.4), M('#2c2c32', { m: 0.6, r: 0.4 }), o.x, 0.55, o.z); const b = mesh(new THREE.BoxGeometry(0.4, 0.35, 0.3), M('#3a2a1c'), o.x, 0.17, o.z); a.castShadow = true; scene.add(a, b); }
+    if (o.k === 'throne') scene.add(throne(o));
+  }
+  // fountain
+  {
+    const g = new THREE.Group();
+    const basin = mesh(new THREE.CylinderGeometry(2.4, 2.6, 0.7, 14), M('#77706a'), 0, 0.35, 0); basin.castShadow = true; basin.receiveShadow = true;
+    const water = mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.1, 14), M('#3a78a8', { e: '#163a60', r: 0.15, m: 0.2 }), 0, 0.62, 0);
+    const pillar = mesh(new THREE.CylinderGeometry(0.3, 0.45, 1.8, 8), M('#8a8278'), 0, 1.2, 0);
+    const bowl = mesh(new THREE.CylinderGeometry(0.9, 0.4, 0.35, 10), M('#8a8278'), 0, 2.1, 0);
+    g.add(basin, water, pillar, bowl); scene.add(g);
+    out.water = water;
+    out.emitters.push({ x: 0, y: 2.3, z: 0, kind: 'fountain' });
+    out.lights.push({ x: 0, y: 2.5, z: 0, color: 0x7ab8ff, power: 0.6 });
+  }
+  // boss arena: rune circle
+  {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(6, 6.4, 48), new THREE.MeshBasicMaterial({ color: 0x5aff8a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(BOSS_ARENA.x - 3, 0.04, BOSS_ARENA.z); scene.add(ring);
+    out.bossRing = ring;
+  }
+  return out;
+}
+function addFlame(scene, out, x, y, z, color, size, kind = 'fire') {
+  const s = glowSprite(color, size * 1.6, 0.9); s.position.set(x, y, z); scene.add(s);
+  const core = glowSprite(0xfff0c0, size * 0.6, 0.9); core.position.set(x, y - 0.05, z); scene.add(core);
+  out.flames.push({ s, core, base: size, seed: Math.random() * 10 });
+  out.lights.push({ x, y, z, color, power: 1 });
+  out.emitters.push({ x, y, z, kind: kind === 'green' ? 'greenfire' : 'ember' });
+}
+function addCampfire(scene, out, x, z) {
+  const g = new THREE.Group();
+  for (let i = 0; i < 4; i++) { const l = mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.1, 5), M('#3a2618'), 0, 0.12, 0); l.rotation.set(Math.PI / 2, 0, i * Math.PI / 4); g.add(l); }
+  for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; g.add(mesh(new THREE.DodecahedronGeometry(0.2, 0), M('#55504a'), Math.cos(a) * 0.75, 0.1, Math.sin(a) * 0.75)); }
+  g.position.set(x, 0, z); scene.add(g);
+  addFlame(scene, out, x, 0.6, z, 0xff7a20, 1.4);
+  out.emitters.push({ x, y: 0.5, z, kind: 'campfire' });
+}
+function building(o, out) {
+  const g = new THREE.Group();
+  const w = o.hw * 2, d = o.hd * 2, h = o.k === 'hall' || o.k === 'inn' ? 3.6 : 3.0;
+  const wallC = o.k === 'forge' ? '#7a6e62' : '#a8927a', roofC = o.k === 'hall' ? '#9a3f30' : o.k === 'inn' ? '#4f6a8a' : o.k === 'forge' ? '#5e5a58' : '#8a5a34';
+  const walls = mesh(new THREE.BoxGeometry(w, h, d), M(wallC), 0, h / 2, 0); walls.castShadow = true; walls.receiveShadow = true;
+  const beams = mesh(new THREE.BoxGeometry(w + 0.1, 0.25, d + 0.1), M('#3a2a1c'), 0, h - 0.1, 0);
+  const base = mesh(new THREE.BoxGeometry(w + 0.3, 0.4, d + 0.3), M('#5a544c'), 0, 0.2, 0);
+  // ridge runs north-south so the low western sun lights one slope and not the other
+  const roofGeo = prism(d + 0.8, 2.2, w + 0.8); roofGeo.rotateY(Math.PI / 2);
+  const roof = mesh(roofGeo, M(roofC), 0, h, 0); roof.castShadow = true;
+  g.add(walls, beams, base, roof);
+  // door + glowing windows face the plaza
+  const face = new THREE.Group();
+  face.add(mesh(new THREE.BoxGeometry(1.1, 1.9, 0.12), M('#2a1a10'), 0, 0.95, 0));
+  for (const sx of [-1, 1]) face.add(mesh(new THREE.BoxGeometry(0.75, 0.7, 0.1), M('#ffb760', { e: '#ff9a30', ei: 1.4 }), sx * (w / 2 - 1.0 > 1.2 ? w / 2 - 1.0 : 1.3), 1.8, 0));
+  const toCenterX = -Math.sign(o.x), toCenterZ = -Math.sign(o.z);
+  // pick the side facing the plaza along z (buildings sit at the corners)
+  face.position.set(0, 0, toCenterZ * (d / 2 + 0.05));
+  if (toCenterZ < 0) face.rotation.y = Math.PI;
+  g.add(face);
+  if (o.k === 'forge') {
+    const ch = mesh(new THREE.BoxGeometry(0.9, 2.4, 0.9), M('#4a4440'), w / 2 - 0.8, h + 1.2, 0); g.add(ch);
+    out.emitters.push({ x: o.x + w / 2 - 0.8, y: h + 2.6, z: o.z, kind: 'smoke' });
+    out.lights.push({ x: o.x + toCenterX * 0, y: 1.5, z: o.z + toCenterZ * (d / 2 + 1), color: 0xff7a2a, power: 1.1 });
+  }
+  if (o.k === 'inn') { const sign = mesh(new THREE.BoxGeometry(1.2, 0.6, 0.08), M('#6a4a2a'), -1.6, 2.6, toCenterZ * (d / 2 + 0.5)); g.add(sign); }
+  // corner posts give the walls a timber-frame look
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(mesh(new THREE.BoxGeometry(0.3, h, 0.3), M('#4a3424'), sx * (w / 2 - 0.1), h / 2, sz * (d / 2 - 0.1)));
+  g.position.set(o.x, 0, o.z);
+  // every material can fade when the hero walks behind the building
+  g.traverse((m) => { if (m.isMesh) { m.material.transparent = true; m.material.userData.fade = true; } });
+  out.buildings.push({ g, o, fade: 1 });
+  return g;
+}
+function stall(o) {
+  // built along x, then turned so the counter faces the plaza
+  const g = new THREE.Group(); const L = Math.max(o.hw, o.hd), W = Math.min(o.hw, o.hd);
+  g.add(mesh(new THREE.BoxGeometry(L * 2, 0.9, W * 2), M('#5a4130'), 0, 0.45, 0));
+  for (const sx of [-1, 1]) g.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 4), M('#3a2a1c'), sx * (L - 0.1), 1.2, -W + 0.1));
+  for (let i = 0; i < 4; i++) {
+    const c = mesh(new THREE.BoxGeometry(L * 2 / 4 + 0.02, 0.06, W * 2 + 0.5), M(i % 2 ? '#d8c8a8' : (o.x < 0 ? '#7a2a26' : '#2a4a6a')), -L + (i + 0.5) * (L * 2 / 4), 2.3, 0.1);
+    c.rotation.x = 0.25; c.castShadow = true; g.add(c);
+  }
+  for (let i = 0; i < 5; i++) g.add(mesh(new THREE.BoxGeometry(0.25, 0.25, 0.25), M(['#a86a2a', '#6a8a3a', '#c8b07a', '#7a3a5a', '#3a6a7a'][i]), -L + 0.4 + i * (L * 2 - 0.8) / 4, 1.02, 0));
+  g.position.set(o.x, 0, o.z);
+  if (o.hd > o.hw) g.rotation.y = o.x < 0 ? -Math.PI / 2 : Math.PI / 2;
+  return g;
+}
+function throne(o) {
+  const g = new THREE.Group();
+  const m = M('#2a2430');
+  g.add(mesh(new THREE.BoxGeometry(2.4, 0.6, 3.6), m, 0, 0.3, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.5, 4.5, 2.6), m, -1.0, 2.5, 0));
+  for (const s of [-1, 1]) g.add(mesh(new THREE.ConeGeometry(0.25, 1.2, 4), M('#4a3f2a', { m: 0.4 }), -1.0, 5.2, s * 0.9));
+  g.position.set(o.x, 0, o.z);
+  return g;
+}
+
+// ---------------------------------------------------------------- characters
+// A rig is { root, body, legs[], arms[], armR, armL, head, weapon, mats[], h, kind }
+function biped(o) {
+  const mats = [];
+  const mk = (c, opts) => { const m = M(c, opts); mats.push(m); return m; };
+  const root = new THREE.Group(); const body = new THREE.Group(); root.add(body);
+  const sc = o.scale || 1;
+  const thin = o.thin ? 0.6 : 1;
+  const legs = [], arms = [];
+  if (o.robe) {
+    const robe = mesh(new THREE.CylinderGeometry(0.28, 0.5, 1.15, 8), mk(o.legs), 0, 0.58, 0); body.add(robe);
+  } else {
+    for (const s of [-1, 1]) {
+      const p = new THREE.Group(); p.position.set(s * 0.15, 0.95, 0);
+      p.add(mesh(new THREE.BoxGeometry(0.22 * thin, 0.75, 0.24 * thin), mk(o.legs), 0, -0.38, 0));
+      p.add(mesh(new THREE.BoxGeometry(0.25 * thin, 0.22, 0.32), mk(o.boots || '#2a2018'), 0, -0.84, 0.03));
+      body.add(p); legs.push(p);
+    }
+  }
+  const torsoW = (o.bulk ? 0.78 : 0.6) * (o.thin ? 0.75 : 1);
+  const torso = mesh(new THREE.BoxGeometry(torsoW, 0.72, 0.34 * (o.thin ? 0.7 : 1)), mk(o.torso), 0, 1.32, 0); body.add(torso);
+  if (o.thin) for (let i = 0; i < 3; i++) body.add(mesh(new THREE.BoxGeometry(torsoW + 0.06, 0.05, 0.3), mk('#bdb6a2'), 0, 1.15 + i * 0.16, 0));
+  if (o.belt) body.add(mesh(new THREE.BoxGeometry(torsoW + 0.04, 0.1, 0.38), mk(o.belt), 0, 1.0, 0));
+  if (o.tabard) body.add(mesh(new THREE.BoxGeometry(torsoW * 0.55, 0.9, 0.05), mk(o.tabard), 0, 1.15, 0.19));
+  if (o.apron) body.add(mesh(new THREE.BoxGeometry(torsoW * 0.8, 1.0, 0.05), mk(o.apron), 0, 1.0, 0.2));
+  if (o.pauldrons) for (const s of [-1, 1]) body.add(mesh(new THREE.SphereGeometry(0.2, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), mk(o.pauldrons, { m: 0.5, r: 0.45 }), s * (torsoW / 2 + 0.06), 1.62, 0));
+  if (o.cape) { const cp = mesh(new THREE.BoxGeometry(torsoW * 0.95, 1.2, 0.05), mk(o.cape), 0, 1.1, -0.2); cp.rotation.x = 0.08; body.add(cp); }
+  const head = new THREE.Group(); head.position.set(0, 1.93, 0); body.add(head);
+  const skinM = mk(o.skin);
+  const hs = o.headScale || 1;
+  head.add(mesh(new THREE.IcosahedronGeometry(0.23 * hs, 1), skinM));
+  if (o.eyes) { const em = mk('#000', { e: o.eyes, ei: 2 }); for (const s of [-1, 1]) head.add(mesh(new THREE.BoxGeometry(0.06, 0.04, 0.03), em, s * 0.08 * hs, 0.02, 0.2 * hs)); }
+  if (o.ears) for (const s of [-1, 1]) { const e = mesh(new THREE.ConeGeometry(0.07, 0.36, 4), skinM, s * 0.27, 0.05, 0); e.rotation.z = -s * Math.PI / 2.3; head.add(e); }
+  if (o.beard) { const b = mesh(new THREE.ConeGeometry(0.15, 0.45, 6), mk(o.beard), 0, -0.25, 0.12); b.rotation.x = Math.PI + 0.25; head.add(b); }
+  if (o.hat === 'helm') { head.add(mesh(new THREE.CylinderGeometry(0.25, 0.26, 0.24, 8), mk('#8d929c', { m: 0.6, r: 0.4 }), 0, 0.08, 0)); head.add(mesh(new THREE.SphereGeometry(0.25, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), mk('#8d929c', { m: 0.6, r: 0.4 }), 0, 0.18, 0)); head.add(mesh(new THREE.BoxGeometry(0.05, 0.22, 0.05), mk('#8d929c', { m: 0.6 }), 0, 0.0, 0.25)); head.add(mesh(new THREE.BoxGeometry(0.06, 0.12, 0.38), mk(o.plume || '#a32a22'), 0, 0.46, -0.04)); }
+  if (o.hat === 'wizard') { head.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 12), mk(o.hatC), 0, 0.14, 0)); const c = mesh(new THREE.ConeGeometry(0.24, 0.75, 8), mk(o.hatC), 0, 0.5, -0.04); c.rotation.x = -0.15; head.add(c); }
+  if (o.hat === 'hood') { const hd = mesh(new THREE.ConeGeometry(0.31, 0.62, 7), mk(o.hatC), 0, 0.17, -0.05); hd.rotation.x = -0.25; head.add(hd); }
+  if (o.hat === 'crown') for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; head.add(mesh(new THREE.ConeGeometry(0.05, 0.28, 4), mk('#c9a23a', { m: 0.7, r: 0.3, e: '#3a2a00' }), Math.cos(a) * 0.2, 0.26, Math.sin(a) * 0.2)); }
+  if (o.hat === 'bald') head.add(mesh(new THREE.BoxGeometry(0.3, 0.12, 0.08), mk(o.beard || '#5a3a20'), 0, 0.14, 0.18));
+  const armW = 0.18 * (o.thin ? 0.7 : 1) * (o.bulk ? 1.25 : 1);
+  for (const s of [-1, 1]) {
+    const p = new THREE.Group(); p.position.set(s * (torsoW / 2 + 0.1), 1.62, 0);
+    p.add(mesh(new THREE.BoxGeometry(armW, 0.68 * (o.longArms ? 1.35 : 1), armW), mk(o.arms || o.torso), 0, -0.32 * (o.longArms ? 1.35 : 1), 0));
+    p.add(mesh(new THREE.IcosahedronGeometry(0.09, 0), skinM, 0, -0.7 * (o.longArms ? 1.35 : 1), 0));
+    body.add(p); arms.push(p);
+  }
+  const armR = arms[1], armL = arms[0];
+  const hand = new THREE.Group(); hand.position.set(0, -0.7 * (o.longArms ? 1.35 : 1), 0); armR.add(hand);
+  const lhand = new THREE.Group(); lhand.position.set(0, -0.7, 0); armL.add(lhand);
+  let weapon = null;
+  const W = o.weapon;
+  if (W === 'sword' || W === 'dagger' || W === 'greatsword') {
+    const len = W === 'dagger' ? 0.45 : W === 'greatsword' ? 1.6 : 1.0;
+    weapon = new THREE.Group();
+    weapon.add(mesh(new THREE.BoxGeometry(0.07, len, 0.14), mk(o.blade || '#c9ced6', { m: 0.7, r: 0.3, e: o.bladeGlow || '#000' }), 0, len / 2 + 0.12, 0));
+    weapon.add(mesh(new THREE.BoxGeometry(0.1, 0.06, 0.34), mk('#b48d55', { m: 0.6 }), 0, 0.1, 0));
+    weapon.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.22, 5), mk('#4a2a1a'), 0, 0, 0));
+    weapon.rotation.x = Math.PI / 2 - 0.25; hand.add(weapon);
+  } else if (W === 'axe') {
+    weapon = new THREE.Group();
+    weapon.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.9, 5), mk('#4a2a1a'), 0, 0.3, 0));
+    weapon.add(mesh(new THREE.BoxGeometry(0.06, 0.35, 0.3), mk('#9aa0a8', { m: 0.6 }), 0, 0.65, 0.12));
+    weapon.rotation.x = Math.PI / 2 - 0.25; hand.add(weapon);
+  } else if (W === 'staff') {
+    weapon = new THREE.Group();
+    weapon.add(mesh(new THREE.CylinderGeometry(0.035, 0.045, 1.9, 6), mk('#6a4a2a'), 0, 0.3, 0));
+    const orb = mesh(new THREE.IcosahedronGeometry(0.13, 1), mk('#000', { e: o.orb || '#7aa8ff', ei: 2.2 }), 0, 1.3, 0); weapon.add(orb);
+    weapon.add(glowSprite(o.orb || '#7aa8ff', 0.8, 0.8)); weapon.children[weapon.children.length - 1].position.y = 1.3;
+    weapon.rotation.x = 0.15; hand.add(weapon);
+  } else if (W === 'bow') {
+    weapon = new THREE.Group();
+    const bow = mesh(new THREE.TorusGeometry(0.62, 0.035, 4, 12, Math.PI * 0.9), mk('#7a5430')); bow.rotation.set(0, Math.PI / 2, Math.PI / 2 + Math.PI * 0.05); weapon.add(bow);
+    weapon.add(mesh(new THREE.BoxGeometry(0.01, 1.18, 0.01), mk('#e8dcc4'), 0, 0, -0.13));
+    weapon.rotation.x = Math.PI / 2; lhand.add(weapon);
+  } else if (W === 'hammer') {
+    weapon = new THREE.Group();
+    weapon.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 5), mk('#4a2a1a'), 0, 0.2, 0));
+    weapon.add(mesh(new THREE.BoxGeometry(0.2, 0.18, 0.32), mk('#3a3a40', { m: 0.6 }), 0, 0.55, 0));
+    weapon.rotation.x = 0.3; hand.add(weapon);
+  } else if (W === 'lantern') {
+    weapon = new THREE.Group();
+    weapon.add(mesh(new THREE.CylinderGeometry(0.035, 0.045, 1.9, 6), mk('#5a4028'), 0, 0.3, 0));
+    weapon.add(mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), mk('#000', { e: '#ffbb55', ei: 2 }), 0.12, 1.15, 0));
+    const gl = glowSprite('#ffb04a', 1.2, 0.9); gl.position.set(0.12, 1.15, 0); weapon.add(gl);
+    weapon.rotation.x = 0.1; hand.add(weapon);
+  }
+  if (o.shield) { const sh = mesh(new THREE.BoxGeometry(0.08, 0.62, 0.5), mk(o.shield, { m: 0.3 }), -0.08, 0.05, 0.05); sh.rotation.x = 0.1; lhand.add(sh); const boss = mesh(new THREE.SphereGeometry(0.08, 6, 4), mk('#b48d55', { m: 0.6 }), -0.13, 0.05, 0.05); lhand.add(boss); }
+  root.scale.setScalar(sc);
+  for (const c of root.children) c.traverse?.((m) => { if (m.isMesh) m.castShadow = false; });
+  return { root, body, legs, arms, armR, armL, head, weapon, mats, h: 2.35 * sc, kind: 'biped', hunch: o.hunch || 0 };
+}
+export const CLASS_LOOK = {
+  warrior: { skin: '#d9a982', torso: '#8b919c', arms: '#8b919c', legs: '#4a4038', boots: '#2a2420', tabard: '#9c2f28', belt: '#3a2618', pauldrons: '#9aa0aa', hat: 'helm', weapon: 'sword', shield: '#6a2a22', cape: '#7a2420' },
+  mage: { skin: '#e2b897', torso: '#2c3f8a', arms: '#2c3f8a', legs: '#24336e', robe: true, belt: '#c9a23a', hat: 'wizard', hatC: '#22306a', weapon: 'staff', orb: '#7aa8ff', cape: '#1c2654' },
+  ranger: { skin: '#cf9e78', torso: '#3d5a32', arms: '#5a4430', legs: '#4a3a2a', boots: '#3a2a1a', belt: '#2a1c12', hat: 'hood', hatC: '#2f4a28', weapon: 'bow', cape: '#2f4a28' },
+};
+export function makePlayerModel(cls) { return biped(CLASS_LOOK[cls]); }
+export function makeNpcModel(kind) {
+  if (kind === 'elder') return biped({ skin: '#d8b090', torso: '#4a5068', arms: '#4a5068', legs: '#3a3f55', robe: true, belt: '#8a6a3a', hat: 'hood', hatC: '#3a3f55', beard: '#e8e2d6', weapon: 'lantern', cape: '#2a2f45' });
+  return biped({ skin: '#c99a76', torso: '#6a5444', arms: '#c99a76', legs: '#3a2f28', boots: '#1f1812', apron: '#4a3020', bulk: true, hat: 'bald', beard: '#7a4a24', weapon: 'hammer' });
+}
+function quad(o) {
+  const mats = []; const mk = (c, opts) => { const m = M(c, opts); mats.push(m); return m; };
+  const root = new THREE.Group(); const body = new THREE.Group(); root.add(body);
+  const legs = [];
+  const bm = mk(o.color);
+  if (o.boar) {
+    const torso = mesh(new THREE.IcosahedronGeometry(0.62, 1), bm, 0, 0.78, 0); torso.scale.set(1, 0.85, 1.45); body.add(torso);
+    for (let i = 0; i < 5; i++) { const c = mesh(new THREE.ConeGeometry(0.07, 0.3, 4), mk('#2a1a10'), 0, 1.3, -0.5 + i * 0.25); body.add(c); }
+  } else {
+    body.add(mesh(new THREE.BoxGeometry(0.46, 0.46, 1.15), bm, 0, 0.78, 0));
+    body.add(mesh(new THREE.BoxGeometry(0.52, 0.55, 0.45), bm, 0, 0.85, 0.35));
+    const tail = mesh(new THREE.BoxGeometry(0.1, 0.1, 0.6), bm, 0, 0.9, -0.75); tail.rotation.x = 0.6; body.add(tail);
+  }
+  const head = new THREE.Group(); head.position.set(0, o.boar ? 0.75 : 1.0, o.boar ? 0.95 : 0.75); body.add(head);
+  head.add(mesh(new THREE.BoxGeometry(o.boar ? 0.5 : 0.36, o.boar ? 0.45 : 0.34, 0.45), bm));
+  head.add(mesh(new THREE.BoxGeometry(o.boar ? 0.32 : 0.2, o.boar ? 0.26 : 0.16, 0.3), mk(o.snout || o.color), 0, -0.06, 0.32));
+  const eyes = mk('#000', { e: o.eyes || '#ffcc33', ei: 2 });
+  for (const s of [-1, 1]) {
+    head.add(mesh(new THREE.BoxGeometry(0.06, 0.05, 0.03), eyes, s * 0.12, 0.08, 0.23));
+    if (o.boar) { const t = mesh(new THREE.ConeGeometry(0.04, 0.25, 4), mk('#efe6d0'), s * 0.15, -0.08, 0.45); t.rotation.x = -1.1; head.add(t); }
+    else { const e = mesh(new THREE.ConeGeometry(0.07, 0.2, 4), bm, s * 0.11, 0.24, -0.05); head.add(e); }
+  }
+  const lh = o.boar ? 0.5 : 0.62;
+  for (const [x, z, ph] of [[-0.18, 0.4, 0], [0.18, 0.4, Math.PI], [-0.18, -0.42, Math.PI], [0.18, -0.42, 0]]) {
+    const p = new THREE.Group(); p.position.set(x, lh, z); p.userData.ph = ph;
+    p.add(mesh(new THREE.BoxGeometry(0.13, lh, 0.15), bm, 0, -lh / 2, 0));
+    body.add(p); legs.push(p);
+  }
+  return { root, body, legs, arms: [], head, mats, h: 1.5, kind: 'quad' };
+}
+function spider() {
+  const mats = []; const mk = (c, opts) => { const m = M(c, opts); mats.push(m); return m; };
+  const root = new THREE.Group(); const body = new THREE.Group(); root.add(body);
+  const bm = mk('#2e2232');
+  body.add(mesh(new THREE.IcosahedronGeometry(0.34, 1), bm, 0, 0.6, 0.25));
+  const ab = mesh(new THREE.IcosahedronGeometry(0.6, 1), mk('#3a2440'), 0, 0.8, -0.5); ab.scale.set(1, 0.85, 1.15); body.add(ab);
+  body.add(mesh(new THREE.BoxGeometry(0.3, 0.05, 0.4), mk('#8a2a3a'), 0, 1.25, -0.5));
+  const eyes = mk('#000', { e: '#ff2a2a', ei: 2.5 });
+  for (let i = 0; i < 4; i++) body.add(mesh(new THREE.BoxGeometry(0.05, 0.05, 0.03), eyes, -0.09 + (i % 2) * 0.18, 0.66 + Math.floor(i / 2) * 0.07, 0.57));
+  const legs = [];
+  for (let i = 0; i < 8; i++) {
+    const s = i < 4 ? -1 : 1, k = i % 4;
+    const p = new THREE.Group(); p.position.set(s * 0.25, 0.65, 0.4 - k * 0.25); p.userData.ph = (k % 2 ? Math.PI : 0) + (s > 0 ? Math.PI : 0);
+    const up = mesh(new THREE.BoxGeometry(0.62, 0.07, 0.07), bm, s * 0.3, 0.18, 0); up.rotation.z = s * 0.6; p.add(up);
+    const lo = mesh(new THREE.BoxGeometry(0.07, 0.75, 0.07), bm, s * 0.6, -0.12, 0); lo.rotation.z = s * 0.25; p.add(lo);
+    p.rotation.y = s * (k - 1.5) * 0.35;
+    body.add(p); legs.push(p);
+  }
+  return { root, body, legs, arms: [], head: null, mats, h: 1.4, kind: 'spider' };
+}
+export function makeMonsterModel(type) {
+  switch (type) {
+    case 'wolf': return quad({ color: '#5d616e', snout: '#4a4d58' });
+    case 'boar': return quad({ color: '#6e4630', snout: '#c08a7a', boar: true, eyes: '#ff5533' });
+    case 'spider': return spider();
+    case 'goblin': return biped({ skin: '#5f8f34', torso: '#5a4a32', arms: '#5f8f34', legs: '#4a3a24', ears: true, weapon: 'dagger', scale: 0.72, headScale: 1.3, eyes: '#ffdd33', hunch: 0.2 });
+    case 'shaman': return biped({ skin: '#6f9a3a', torso: '#7a2a22', arms: '#6f9a3a', legs: '#4a2a1a', ears: true, weapon: 'staff', orb: '#ff6a2a', scale: 0.75, headScale: 1.3, eyes: '#ff8833', robe: true, hunch: 0.2 });
+    case 'skeleton': return biped({ skin: '#ddd6c2', torso: '#c9c2ae', arms: '#ddd6c2', legs: '#ddd6c2', boots: '#bdb6a2', thin: true, weapon: 'sword', blade: '#8a8478', shield: '#4a3a2a', eyes: '#66ccff' });
+    case 'archer': return biped({ skin: '#ddd6c2', torso: '#c9c2ae', arms: '#ddd6c2', legs: '#ddd6c2', boots: '#bdb6a2', thin: true, weapon: 'bow', hat: 'hood', hatC: '#3a3a30', eyes: '#66ff99' });
+    case 'ghoul': return biped({ skin: '#7a8a72', torso: '#5a6a56', arms: '#7a8a72', legs: '#4a5444', longArms: true, hunch: 0.5, eyes: '#ccff44', scale: 1.05 });
+    case 'guard': return biped({ skin: '#d6cdb5', torso: '#4a4e58', arms: '#d6cdb5', legs: '#d6cdb5', thin: true, pauldrons: '#5a5e68', hat: 'helm', plume: '#2a2a2a', weapon: 'axe', shield: '#3a3e48', eyes: '#55ff88', scale: 1.25 });
+    case 'boss': return biped({ skin: '#cfc5a8', torso: '#2a1e34', arms: '#2a1e34', legs: '#1e1626', robe: true, pauldrons: '#3a3446', hat: 'crown', weapon: 'greatsword', blade: '#5a6a5a', bladeGlow: '#1a5a2a', eyes: '#66ff88', cape: '#3a1424', scale: 2.3 });
+  }
+  return biped({ skin: '#888', torso: '#666', legs: '#444' });
+}
+
+// ---------------------------------------------------------------- loot
+const RCOL = [0xddd6c4, 0x6f93ff, 0xffd651, 0xbd7bff, 0xff8c26];
+export function makeLootModel(kind, r) {
+  const g = new THREE.Group();
+  if (kind === 'gold') {
+    for (let i = 0; i < 4; i++) { const c = mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.05, 10), M('#e8b830', { m: 0.8, r: 0.3, e: '#3a2a00' }), (Math.random() - 0.5) * 0.3, 0.05 + i * 0.05, (Math.random() - 0.5) * 0.3); g.add(c); }
+    return { g, spin: null };
+  }
+  if (kind === 'pot') {
+    g.add(mesh(new THREE.IcosahedronGeometry(0.18, 1), M('#c0202a', { e: '#600010', r: 0.3 }), 0, 0.25, 0));
+    g.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.15, 6), M('#8a7a6a'), 0, 0.45, 0));
+    return { g, spin: null };
+  }
+  const gem = mesh(new THREE.OctahedronGeometry(0.24, 0), M(RCOL[r], { e: RCOL[r], ei: 0.6, r: 0.3, m: 0.3 }), 0, 0.5, 0);
+  g.add(gem);
+  if (r >= 2) {
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.22, 7, 8, 1, true), new THREE.MeshBasicMaterial({ color: RCOL[r], transparent: true, opacity: r === 4 ? 0.5 : 0.32, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    beam.position.y = 3.5; g.add(beam);
+  }
+  if (r >= 1) { const gl = glowSprite(RCOL[r], r >= 3 ? 2.2 : 1.4, 0.8); gl.position.y = 0.5; g.add(gl); }
+  return { g, spin: gem };
+}
+export { NPCS };
