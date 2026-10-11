@@ -101,6 +101,8 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
 .lbl.pl .hpb i { background: var(--good); }
 .lbl .lv { color: var(--ash); font-weight: 500; font-size: 11px; }
 .lbl.champ { color: #8fb6ff; }
+.lbl.obj { color: #bfe6ff; font-size: 12px; pointer-events: auto; cursor: pointer; padding: 2px 6px; }
+.lbl.obj:hover { color: #fff; }
 .lbl.npc .t { display: block; color: var(--ash); font-weight: 500; font-size: 11px; font-style: italic; }
 .loot { pointer-events: auto; cursor: pointer; padding: 1px 7px; background: rgba(8,6,10,.82); border: 1px solid rgba(255,255,255,.08); font-size: 12.5px; border-radius: 2px; }
 .loot:hover { background: rgba(40,30,20,.95); border-color: currentColor; }
@@ -230,6 +232,20 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
 #shopwin small { color: var(--ash); display: block; }
 #gamble { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
 #gamble button { padding: 8px 4px; font-size: 12.5px; }
+#shopwin .gamble { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+#shopwin .gamble button { padding: 8px 4px; font-size: 12.5px; }
+#shopwin .ware { display: grid; grid-template-columns: 46px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(94,74,48,.5); }
+#shopwin .ware .inv { width: 46px; }
+#shopwin .ware div { font-size: 14px; min-width: 0; }
+#shopwin .hd { font-family: var(--font-sc); letter-spacing: .08em; color: var(--ember-hi); font-size: 13px; margin-top: 12px; }
+#stashwin { left: 16px; top: 50%; transform: translateY(-50%); width: min(400px, calc(100vw - 32px)); }
+#stash { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 10px; }
+#waywin { left: 16px; top: 50%; transform: translateY(-50%); width: min(380px, calc(100vw - 32px)); }
+.way { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; margin-top: 6px; background: rgba(0,0,0,.25); border: 1px solid rgba(94,74,48,.6); color: var(--bone); cursor: pointer; border-radius: 2px; font: inherit; }
+.way:hover:not(:disabled) { border-color: var(--rim-hi); }
+.way:disabled { cursor: default; opacity: .55; }
+.way b { font-size: 16px; } .way small { color: var(--ash); display: block; font-size: 12px; }
+.way .here { color: var(--good); font-size: 12px; }
 .say { font-style: italic; color: var(--ash); margin: 8px 0 4px; font-size: 14px; line-height: 1.4; }
 
 #questwin { left: 16px; top: 50%; transform: translateY(-50%); width: min(440px, calc(100vw - 32px)); }
@@ -354,14 +370,24 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
     </div>
   </section>
 
-  <section id="shopwin" class="win panel" hidden aria-label="Borin's wares">
+  <section id="shopwin" class="win panel" hidden aria-label="Trader">
     <button class="x" data-close="shopwin" aria-label="Close">×</button>
-    <h2 class="ptitle">Borin Ashfold</h2>
-    <p class="say">“Sell me your spoils, buy what keeps you breathing. Or try your luck on a sealed crate — I don't open them, so I don't know what's inside either.”</p>
-    <div class="row"><div>Healing Potion<small>Restores 45% of your life</small></div><button class="btn" id="buypot"></button></div>
-    <div style="padding-top:10px">Sealed crate<small style="color:var(--ash)">A random magic or better item for your level. Pick the slot:</small></div>
-    <div id="gamble"></div>
-    <p class="say" style="font-style:normal;font-size:13px">Click any item in your bags to sell it.</p>
+    <div id="shopbody"></div>
+  </section>
+
+  <section id="stashwin" class="win panel" hidden aria-label="Chest">
+    <button class="x" data-close="stashwin" aria-label="Close">×</button>
+    <h2 class="ptitle">Your Chest</h2>
+    <p class="say" style="font-style:normal;font-size:13px">Click an item in your bags to put it in the chest. Click an item in the chest to take it out. Every town has a chest, and they all hold the same things.</p>
+    <div id="stash"></div>
+    <div style="margin-top:8px;font-size:13px;color:var(--ash)" id="stashfoot"></div>
+  </section>
+
+  <section id="waywin" class="win panel" hidden aria-label="Waystone">
+    <button class="x" data-close="waywin" aria-label="Close">×</button>
+    <h2 class="ptitle">Waystone</h2>
+    <p class="say" style="font-style:normal;font-size:13px">Touch the waystone in a town once, and you can travel there from any other waystone.</p>
+    <div id="waylist"></div>
   </section>
 
   <section id="questwin" class="win panel" hidden aria-label="Quests">
@@ -391,6 +417,7 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
       <dt>Mouse wheel</dt><dd>Zoom the camera.</dd>
     </dl>
     <p class="say" style="font-style:normal">Talk to <b>Elder Maren</b> (gold “!” above her head) for quests and to <b>Borin</b> to trade. The fountain in town heals you. Enemies with a blue glow are champions: tougher, with better loot. Everyone near a kill gets their own loot and full experience, so group up.</p>
+    <p class="say" style="font-style:normal">After level 10, cross the ridge to the <b>outer lands</b>. Three more towns wait there: <b>Frosthaven</b> (north), <b>Cinderwatch</b> (east) and <b>Mirebrook</b> (south), each with new quests and a trader with better wares. Every town has a <b>chest</b> for storing items and a <b>waystone</b> for fast travel. You rise again in the last town you visited.</p>
     <div class="opts">
       <button class="btn ghost" id="opt-sound"></button>
       <button class="btn ghost" id="opt-music"></button>

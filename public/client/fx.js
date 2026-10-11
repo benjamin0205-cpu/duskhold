@@ -76,7 +76,7 @@ export class Particles {
 }
 
 // ---------------------------------------------------------------- projectiles
-const PCOL = { bolt: 0xa37bff, fireball: 0xff7a1a, arrow: 0xe8dcc0, fire: 0xff6a20, arrow_m: 0x8aff9a, bone: 0xdddddd };
+const PCOL = { bolt: 0xa37bff, fireball: 0xff7a1a, arrow: 0xe8dcc0, fire: 0xff6a20, arrow_m: 0x8aff9a, bone: 0xdddddd, frost: 0x9ae8ff, void: 0xc08aff };
 export class Projectiles {
   constructor(scene, parts) { this.scene = scene; this.parts = parts; this.list = new Map(); }
   spawn(e) {
@@ -108,6 +108,8 @@ export class Projectiles {
       const { x, y, z } = p.g.position;
       if (p.kind === 'fireball') this.parts.emit(x, y, z, { n: 3, color: 0xff8a20, color2: 0xffd060, speed: 0.6, life: [0.25, 0.5], size: [0.35, 0.6], vy: 0.6, grow: -0.6 });
       else if (p.kind === 'bolt') this.parts.emit(x, y, z, { n: 2, color: 0x9a6aff, color2: 0xd0b8ff, speed: 0.3, life: [0.2, 0.35], size: [0.2, 0.32] });
+      else if (p.kind === 'frost') this.parts.emit(x, y, z, { n: 2, color: 0x9ae8ff, color2: 0xffffff, speed: 0.3, life: [0.2, 0.4], size: [0.2, 0.32] });
+      else if (p.kind === 'void') this.parts.emit(x, y, z, { n: 2, color: 0x8a4aff, color2: 0xe0c0ff, speed: 0.3, life: [0.2, 0.4], size: [0.22, 0.36] });
       else if (p.kind === 'fire') this.parts.emit(x, y, z, { n: 2, color: 0xff5a10, color2: 0xffb040, speed: 0.4, life: [0.2, 0.4], size: [0.25, 0.4], vy: 0.5 });
       if (p.trav > p.d + 1) { this.scene.remove(p.g); this.list.delete(id); }
     }

@@ -4,11 +4,16 @@
 // the world layout, classes, monsters, items, quests and the rules of combat.
 
 export const TICK = 1 / 20;
-export const WORLD_R = 140;
+export const WORLD_R = 226;
 export const TOWN_R = 22;
+export const INNER_R = 145;   // the old realm; beyond it lie the outer lands
+export const RING_R = 170;    // the ring road that links the outer towns
 export const PLAYER_R = 0.5;
-export const MAX_LEVEL = 12;
+export const MAX_LEVEL = 20;
 export const INV_SIZE = 24;
+export const INV_MAX = 36;
+export const STASH_SIZE = 30;
+export const STASH_MAX = 54;
 export const MAX_POTIONS = 20;
 export const POTION_COST = 25;
 export const VIEW_R = 62;
@@ -30,36 +35,55 @@ const pick = (a) => a[Math.floor(Math.random() * a.length)];
 export const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
 const r2 = (v) => Math.round(v * 100) / 100;
 const num = (v, f = 0) => (typeof v === 'number' && isFinite(v) ? v : f);
-export function xpNeed(l) { return Math.floor(100 * Math.pow(l, 1.55)); }
+export function xpNeed(l) { return Math.floor(100 * Math.pow(l, 1.55) * (l > 10 ? 1 + (l - 10) * 0.25 : 1)); }
 
 // ---------------------------------------------------------------- zones
 export const ZONES = {
-  town:   { name: 'Duskhold', sub: 'Sanctuary', lv: null },
+  town:   { name: 'Duskhold', sub: 'Sanctuary', lv: null, safe: true },
   meadow: { name: 'Whispering Meadow', lv: [1, 3] },
   thorn:  { name: 'Thornwood', lv: [3, 6] },
   grave:  { name: 'Ashen Graveyard', lv: [6, 9] },
   crypt:  { name: 'Hollow Crypt', lv: [9, 10] },
+  frost:  { name: 'Frostpeak', lv: [11, 13] },
+  ember:  { name: 'Emberwaste', lv: [13, 15] },
+  mire:   { name: 'Drowned Marsh', lv: [15, 17] },
+  spire:  { name: 'Shattered Spire', lv: [17, 20] },
+  frosthaven:  { name: 'Frosthaven', sub: 'Town of the high passes', lv: null, safe: true },
+  cinderwatch: { name: 'Cinderwatch', sub: 'Town at the edge of the fire', lv: null, safe: true },
+  mirebrook:   { name: 'Mirebrook', sub: 'Town on stilts', lv: null, safe: true },
 };
+// Winding roads leave the town gates toward each zone.
+export function roadWiggle(t) { return Math.sin(t * 0.07) * 4 + Math.sin(t * 0.023 + 1) * 3; }
+export const ROADS = [
+  { ax: 1, az: 0, len: RING_R },   // east  -> Thornwood -> Cinderwatch
+  { ax: 0, az: 1, len: RING_R },   // south -> Graveyard -> Mirebrook
+  { ax: -1, az: 0, len: 104 },     // west  -> Crypt
+  { ax: 0, az: -1, len: RING_R },  // north -> Meadow -> Frosthaven
+];
+const ringWiggle = (a) => Math.sin(a * 5) * 3;
+// Every town: Duskhold in the middle, three outposts on the ring road.
+export const TOWNS = [
+  { id: 'town', name: 'Duskhold', x: 0, z: 0, r: TOWN_R, lvl: 1 },
+  { id: 'frosthaven', name: 'Frosthaven', x: roadWiggle(RING_R), z: -RING_R, r: 15, lvl: 12 },
+  { id: 'cinderwatch', name: 'Cinderwatch', x: RING_R, z: roadWiggle(RING_R), r: 15, lvl: 14 },
+  { id: 'mirebrook', name: 'Mirebrook', x: roadWiggle(RING_R), z: RING_R, r: 15, lvl: 16 },
+];
+export const TOWN_BY_ID = Object.fromEntries(TOWNS.map((t) => [t.id, t]));
+export const isSafe = (zone) => !!(ZONES[zone] && ZONES[zone].safe);
 export function zoneAt(x, z) {
+  for (const t of TOWNS) { const dx = x - t.x, dz = z - t.z; if (dx * dx + dz * dz < t.r * t.r) return t.id; }
   const r = Math.hypot(x, z);
-  if (r < TOWN_R) return 'town';
   const q = Math.round(Math.atan2(z, x) / (Math.PI / 2));
-  return q === 0 ? 'thorn' : q === 1 ? 'grave' : q === -1 ? 'meadow' : 'crypt';
+  if (r < INNER_R) return q === 0 ? 'thorn' : q === 1 ? 'grave' : q === -1 ? 'meadow' : 'crypt';
+  return q === 0 ? 'ember' : q === 1 ? 'mire' : q === -1 ? 'frost' : 'spire';
 }
 export function zoneLevel(x, z) {
   const zn = zoneAt(x, z); const zd = ZONES[zn];
   if (!zd.lv) return 0;
-  const t = clamp((Math.hypot(x, z) - 30) / 90, 0, 1);
+  const r = Math.hypot(x, z);
+  const t = r < INNER_R ? clamp((r - 30) / 90, 0, 1) : clamp((r - 150) / 70, 0, 1);
   return Math.round(zd.lv[0] + t * (zd.lv[1] - zd.lv[0]));
 }
-// Four winding roads leave the town gates toward each zone.
-export function roadWiggle(t) { return Math.sin(t * 0.07) * 4 + Math.sin(t * 0.023 + 1) * 3; }
-export const ROADS = [
-  { ax: 1, az: 0, len: 124 },   // east  -> Thornwood
-  { ax: 0, az: 1, len: 124 },   // south -> Graveyard
-  { ax: -1, az: 0, len: 104 },  // west  -> Crypt
-  { ax: 0, az: -1, len: 124 },  // north -> Meadow
-];
 export function roadDist(x, z) {
   let best = 1e9;
   for (const r of ROADS) {
@@ -69,9 +93,13 @@ export function roadDist(x, z) {
     const dd = Math.abs(perp - roadWiggle(along));
     if (dd < best) best = dd;
   }
+  const rr = Math.hypot(x, z);
+  if (rr > RING_R - 12 && rr < RING_R + 12) best = Math.min(best, Math.abs(rr - RING_R - ringWiggle(Math.atan2(z, x))));
   return best;
 }
 export const BOSS_ARENA = { x: -118, z: 0, r: 14 };
+export const BOSS_ARENA2 = { x: -200, z: 0, r: 15 };
+export const ARENAS = [BOSS_ARENA, BOSS_ARENA2];
 
 // ---------------------------------------------------------------- data: classes
 export const CLASSES = {
@@ -122,11 +150,24 @@ export const MONSTERS = {
   archer:   { name: 'Skeleton Archer', short: 'Archer', hp: 56, dmg: 11, speed: 4.8, r: 0.6, range: 11, ranged: true, proj: 'arrow_m', pspeed: 19, atkCd: 2.1, aggro: 13, xp: 1.4 },
   ghoul:    { name: 'Grave Ghoul', short: 'Ghoul', hp: 95, dmg: 12, speed: 6.4, r: 0.7, range: 1.8, atkCd: 1.0, aggro: 10, xp: 1.5 },
   guard:    { name: 'Bone Warden', short: 'Warden', hp: 150, dmg: 15, speed: 5, r: 0.85, range: 2.1, atkCd: 1.5, aggro: 11, xp: 2.2 },
-  boss:     { name: 'Morvath, the Hollow King', short: 'Morvath', hp: 14000, dmg: 42, speed: 4.7, r: 1.7, range: 3.4, atkCd: 1.8, aggro: 15, xp: 32, boss: true },
+  boss:     { name: 'Morvath, the Hollow King', short: 'Morvath', hp: 14000, dmg: 42, speed: 4.7, r: 1.7, range: 3.4, atkCd: 1.8, aggro: 15, xp: 32, boss: true, minions: ['skeleton', 'archer'] },
+  // the outer lands
+  frostwolf:  { name: 'Rime Wolf', short: 'Rime Wolf', hp: 70, dmg: 13, speed: 6.8, r: 0.75, range: 1.8, atkCd: 1.0, aggro: 10, xp: 1.3 },
+  yeti:       { name: 'Pale Giant', short: 'Giant', hp: 160, dmg: 20, speed: 5.2, r: 1.1, range: 2.4, atkCd: 1.6, aggro: 9, xp: 2.0 },
+  wraith:     { name: 'Ice Wraith', short: 'Wraith', hp: 70, dmg: 16, speed: 5, r: 0.6, range: 11, ranged: true, proj: 'frost', pspeed: 17, atkCd: 2.0, aggro: 13, xp: 1.5 },
+  imp:        { name: 'Cinder Imp', short: 'Imp', hp: 60, dmg: 14, speed: 6, r: 0.55, range: 10, ranged: true, proj: 'fire', pspeed: 16, atkCd: 1.8, aggro: 12, xp: 1.4 },
+  brute:      { name: 'Magma Brute', short: 'Brute', hp: 190, dmg: 23, speed: 4.6, r: 1.15, range: 2.5, atkCd: 1.7, aggro: 9, xp: 2.2 },
+  hound:      { name: 'Ash Hound', short: 'Hound', hp: 90, dmg: 17, speed: 7, r: 0.8, range: 1.8, atkCd: 1.0, aggro: 11, xp: 1.5 },
+  lurker:     { name: 'Bog Lurker', short: 'Lurker', hp: 130, dmg: 19, speed: 6, r: 0.8, range: 2, atkCd: 1.1, aggro: 10, xp: 1.7 },
+  drowned:    { name: 'Drowned Sailor', short: 'Drowned', hp: 110, dmg: 18, speed: 5, r: 0.6, range: 1.8, atkCd: 1.2, aggro: 10, xp: 1.6 },
+  horror:     { name: 'Marsh Horror', short: 'Horror', hp: 150, dmg: 20, speed: 6, r: 1.1, range: 2.1, atkCd: 1.3, aggro: 9, xp: 1.9 },
+  voidknight: { name: 'Void Knight', short: 'Knight', hp: 200, dmg: 24, speed: 5, r: 0.9, range: 2.2, atkCd: 1.5, aggro: 11, xp: 2.3 },
+  shade:      { name: 'Shard Shade', short: 'Shade', hp: 90, dmg: 20, speed: 5.2, r: 0.6, range: 11, ranged: true, proj: 'void', pspeed: 18, atkCd: 2.0, aggro: 13, xp: 1.8 },
+  boss2:      { name: 'Nharzul, the Shardbound', short: 'Nharzul', hp: 110000, dmg: 110, speed: 4.9, r: 1.9, range: 3.6, atkCd: 1.7, aggro: 16, xp: 70, boss: true, minions: ['voidknight', 'shade'] },
 };
 export const MONSTER_LIST = Object.keys(MONSTERS);
 const CHAMP_ADJ = ['Grim', 'Ashen', 'Dread', 'Feral', 'Gloom', 'Savage', 'Cursed', 'Rotting', 'Bloodsworn', 'Hollow'];
-export const PROJ_KINDS = ['bolt', 'fireball', 'arrow', 'fire', 'arrow_m', 'bone'];
+export const PROJ_KINDS = ['bolt', 'fireball', 'arrow', 'fire', 'arrow_m', 'bone', 'frost', 'void'];
 
 // ---------------------------------------------------------------- data: items
 export const SLOTS = ['weapon', 'helm', 'chest', 'gloves', 'boots', 'ring', 'amulet'];
@@ -136,17 +177,17 @@ export const RARITY_COLORS = ['#ddd6c4', '#6f93ff', '#ffd651', '#bd7bff', '#ff8c
 const RMULT = [1, 1.15, 1.3, 1.45, 1.65];
 const RVALUE = [1, 2.5, 5, 10, 20];
 const WEAPON_BASES = {
-  warrior: ['Rusty Sword', 'Broadsword', 'War Axe', 'Greatsword', 'Headsman Axe'],
-  mage: ['Gnarled Staff', 'Oak Staff', 'Runed Staff', 'Crystal Staff', 'Ember Rod'],
-  ranger: ['Short Bow', 'Hunting Bow', 'Recurve Bow', 'Longbow', 'Wyrmhorn Bow'],
+  warrior: ['Rusty Sword', 'Broadsword', 'War Axe', 'Greatsword', 'Headsman Axe', 'Frostbrand Blade', 'Magma Cleaver', 'Shardsteel Greatblade'],
+  mage: ['Gnarled Staff', 'Oak Staff', 'Runed Staff', 'Crystal Staff', 'Ember Rod', 'Rimeglass Staff', 'Cinder Scepter', 'Voidshard Staff'],
+  ranger: ['Short Bow', 'Hunting Bow', 'Recurve Bow', 'Longbow', 'Wyrmhorn Bow', 'Icehorn Bow', 'Ashwood Greatbow', 'Starshard Bow'],
 };
 const ARMOR_BASES = {
-  helm: ['Leather Cap', 'Iron Helm', 'Horned Helm', 'Warden Helm'],
-  chest: ['Padded Vest', 'Chain Shirt', 'Scale Hauberk', 'Plate Cuirass'],
-  gloves: ['Cloth Wraps', 'Leather Gloves', 'Chain Gauntlets', 'Plate Gauntlets'],
-  boots: ['Sandals', 'Leather Boots', 'Chain Boots', 'Plate Greaves'],
-  ring: ['Copper Ring', 'Silver Ring', 'Gold Ring', 'Obsidian Ring'],
-  amulet: ['Bone Charm', 'Silver Amulet', 'Jade Amulet', 'Star Amulet'],
+  helm: ['Leather Cap', 'Iron Helm', 'Horned Helm', 'Warden Helm', 'Frostforged Helm', 'Obsidian Visage', 'Shardcrown'],
+  chest: ['Padded Vest', 'Chain Shirt', 'Scale Hauberk', 'Plate Cuirass', 'Yeti-hide Coat', 'Magmaplate', 'Voidwoven Robe'],
+  gloves: ['Cloth Wraps', 'Leather Gloves', 'Chain Gauntlets', 'Plate Gauntlets', 'Rime Grips', 'Cinder Fists', 'Shard Talons'],
+  boots: ['Sandals', 'Leather Boots', 'Chain Boots', 'Plate Greaves', 'Snowstriders', 'Ashwalkers', 'Marsh Waders'],
+  ring: ['Copper Ring', 'Silver Ring', 'Gold Ring', 'Obsidian Ring', 'Frost Opal Ring', 'Ember Garnet Ring', 'Void Pearl Ring'],
+  amulet: ['Bone Charm', 'Silver Amulet', 'Jade Amulet', 'Star Amulet', 'Glacier Pendant', 'Phoenix Locket', 'Eye of the Spire'],
 };
 const SLOT_ARMOR = { helm: 1, chest: 1.5, gloves: 0.7, boots: 0.8 };
 export const AFFIX = {
@@ -168,7 +209,7 @@ const LEGENDARY = {
   ring: 'Band of the Endless Night', amulet: 'Heart of Duskhold',
 };
 let itemSeq = Math.floor(Math.random() * 1e6) * 1000;
-const AFFIX_CAP = { power: 40, life: 220, armor: 110, crit: 15, speed: 15, lifesteal: 7, cdr: 15 };
+const AFFIX_CAP = { power: 70, life: 460, armor: 220, crit: 20, speed: 20, lifesteal: 9, cdr: 20 };
 
 function rollAffix(k, ilvl, q) {
   switch (k) {
@@ -187,10 +228,10 @@ export function makeItem(ilvl, rarity, slot, cls) {
   rarity = clamp(rarity | 0, 0, 4);
   if (!slot) slot = Math.random() < 0.22 ? 'weapon' : pick(SLOTS.slice(1));
   const it = { id: ++itemSeq, slot, r: rarity, il: ilvl, aff: {} };
-  const tier = clamp(Math.floor((ilvl - 1) / 3), 0, 3);
+  const tier = clamp(Math.floor((ilvl - 1) / 3), 0, 6);
   if (slot === 'weapon') {
     it.cls = cls;
-    it.base = WEAPON_BASES[cls][clamp(tier + (rarity >= 3 ? 1 : 0), 0, 4)];
+    it.base = WEAPON_BASES[cls][clamp(tier + (rarity >= 3 ? 1 : 0), 0, 7)];
     const avg = (6 + 2.6 * ilvl) * RMULT[rarity] * rnd(0.9, 1.1);
     const sp = cls === 'warrior' ? 0.32 : cls === 'mage' ? 0.2 : 0.25;
     it.dmin = Math.max(1, Math.round(avg * (1 - sp)));
@@ -229,55 +270,121 @@ function rollRarity(boost = 0) {
 }
 
 // ---------------------------------------------------------------- data: quests & NPCs
+const at = (town, dx, dz) => ({ x: TOWN_BY_ID[town].x + dx, z: TOWN_BY_ID[town].z + dz, town });
 export const NPCS = [
-  { id: 'maren', name: 'Elder Maren', title: 'Keeper of the Watch', x: -6.5, z: -7, kind: 'elder' },
-  { id: 'borin', name: 'Borin Ashfold', title: 'Smith & Trader', x: 8.5, z: -7, kind: 'smith' },
+  { id: 'maren', name: 'Elder Maren', title: 'Keeper of the Watch', ...at('town', -6.5, -7), kind: 'elder', role: 'quest' },
+  { id: 'borin', name: 'Borin Ashfold', title: 'Smith & Trader', ...at('town', 8.5, -7), kind: 'smith', role: 'shop' },
+  { id: 'hilde', name: 'Warden Hilde', title: 'Captain of the Pass', ...at('frosthaven', -3.5, -3), kind: 'elder', look: 'frost', role: 'quest' },
+  { id: 'ulfar', name: 'Ulfar Stonepelt', title: 'Furrier & Trader', ...at('frosthaven', 3.5, -3), kind: 'smith', look: 'frost', role: 'shop' },
+  { id: 'tamsin', name: 'Forgewife Tamsin', title: 'Keeper of the Last Forge', ...at('cinderwatch', -3.5, -3), kind: 'elder', look: 'ember', role: 'quest' },
+  { id: 'varek', name: 'Varek the Bright', title: 'Alchemist', ...at('cinderwatch', 3.5, -3), kind: 'smith', look: 'ember', role: 'shop' },
+  { id: 'fenwick', name: 'Old Fenwick', title: 'Ferryman of the Marsh', ...at('mirebrook', -3.5, -3), kind: 'elder', look: 'mire', role: 'quest' },
+  { id: 'yselle', name: 'Yselle Moonwater', title: 'Curio Dealer', ...at('mirebrook', 3.5, -3), kind: 'smith', look: 'mire', role: 'shop' },
 ];
+export const NPC_BY_ID = Object.fromEntries(NPCS.map((n) => [n.id, n]));
 export const QUESTS = [
-  { id: 'q1', name: 'Wolves at the Gate', lvl: 1, zone: 'meadow', goal: { kill: ['wolf'], n: 6 }, reward: { xp: 150, gold: 30 },
+  { id: 'q1', giver: 'maren', name: 'Wolves at the Gate', lvl: 1, zone: 'meadow', goal: { kill: ['wolf'], n: 6 }, reward: { xp: 150, gold: 30 },
     text: 'The dusk wolves have grown bold. They prowl the Whispering Meadow north of the gate and drag off anyone who strays from the road. Thin the pack, traveler.',
     done: 'Six fewer wolves. The shepherds will sleep tonight. Take this, and keep your blade close.' },
-  { id: 'q2', name: 'Bristleback Menace', lvl: 2, zone: 'meadow', goal: { kill: ['boar'], n: 5 }, reward: { xp: 260, gold: 50, item: { slot: 'boots', r: 1 } },
+  { id: 'q2', giver: 'maren', name: 'Bristleback Menace', lvl: 2, zone: 'meadow', goal: { kill: ['boar'], n: 5 }, reward: { xp: 260, gold: 50, item: { slot: 'boots', r: 1 } },
     text: 'Boars as big as carts are tearing up the far end of the meadow. One of them gored a woodcutter last spring. Put down five of the brutes.',
     done: 'The fields are quiet again. Borin made these boots from the last hide that came through the gate. They are yours.' },
-  { id: 'q3', name: 'Smoke over Thornwood', lvl: 3, zone: 'thorn', goal: { kill: ['goblin', 'shaman'], n: 8 }, reward: { xp: 520, gold: 80 },
+  { id: 'q3', giver: 'maren', name: 'Smoke over Thornwood', lvl: 3, zone: 'thorn', goal: { kill: ['goblin', 'shaman'], n: 8 }, reward: { xp: 520, gold: 80 },
     text: 'Goblin fires burn in Thornwood to the east. They raid our wagons and sell what they steal to worse things than themselves. Break their camps.',
     done: 'The smoke is thinning. Good work. Something deeper in the wood is still feeding their courage, though.' },
-  { id: 'q4', name: 'Silk and Venom', lvl: 5, zone: 'thorn', goal: { kill: ['spider'], n: 5 }, reward: { xp: 800, gold: 100, item: { slot: 'weapon', r: 2 } },
+  { id: 'q4', giver: 'maren', name: 'Silk and Venom', lvl: 5, zone: 'thorn', goal: { kill: ['spider'], n: 5 }, reward: { xp: 800, gold: 100, item: { slot: 'weapon', r: 2 } },
     text: 'Deep in Thornwood the spiders nest in the old pines. Their venom is what the goblins tip their blades with. Slay five of them.',
     done: 'No more poison for goblin knives. I had this weapon set aside for whoever came back from that wood alive.' },
-  { id: 'q5', name: 'The Restless Dead', lvl: 6, zone: 'grave', goal: { kill: ['skeleton', 'archer', 'ghoul'], n: 10 }, reward: { xp: 1300, gold: 150 },
+  { id: 'q5', giver: 'maren', name: 'The Restless Dead', lvl: 6, zone: 'grave', goal: { kill: ['skeleton', 'archer', 'ghoul'], n: 10 }, reward: { xp: 1300, gold: 150 },
     text: 'Something is waking the dead in the Ashen Graveyard to the south. The chapel bell rang last night with no hand on the rope. Lay ten of the risen back to rest.',
     done: 'They do not stay down long, do they? The bodies all crawled west before they fell. West, toward the crypt.' },
-  { id: 'q6', name: 'Wardens of Bone', lvl: 8, zone: 'crypt', goal: { kill: ['guard'], n: 4 }, reward: { xp: 1800, gold: 200, item: { r: 2 } },
+  { id: 'q6', giver: 'maren', name: 'Wardens of Bone', lvl: 8, zone: 'crypt', goal: { kill: ['guard'], n: 4 }, reward: { xp: 1800, gold: 200, item: { r: 2 } },
     text: 'The risen dead march west to the Hollow Crypt. Bone Wardens guard the road to whatever calls them. Break four of them.',
     done: 'The way is open. You know what waits at the end of it.' },
-  { id: 'q7', name: 'The Hollow King', lvl: 9, zone: 'crypt', goal: { kill: ['boss'], n: 1 }, reward: { xp: 4000, gold: 500, item: { r: 3 } },
+  { id: 'q7', giver: 'maren', name: 'The Hollow King', lvl: 9, zone: 'crypt', goal: { kill: ['boss'], n: 1 }, reward: { xp: 4000, gold: 500, item: { r: 3 } },
     text: 'Morvath. Once the lord of this keep, now a crown with nothing beneath it. He sits at the heart of the Hollow Crypt in the far west and calls the dead to him. End him. Bring friends.',
     done: 'The bells are silent. For the first time in years, I believe Duskhold will see a dawn. This was meant for a hero. It is yours.' },
-  { id: 'bounty', name: 'Champion Bounty', lvl: 10, repeat: true, zone: null, goal: { champion: true, n: 3 }, reward: { xp: 2500, gold: 300, item: { r: 2 } },
+  { id: 'bounty', giver: 'maren', prev: 'q7', name: 'Champion Bounty', lvl: 10, repeat: true, zone: null, goal: { champion: true, n: 3 }, reward: { xp: 2500, gold: 300, item: { r: 2 } },
     text: 'Champions still roam the wilds: beasts and dead things swollen with stolen power. You will know them by their glow. Slay three anywhere in the realm and I will pay well.',
     done: 'Three fewer horrors in the wild. Here is your pay. Come back when you want more work.' },
+  // Frosthaven
+  { id: 'f1', giver: 'hilde', name: 'Teeth in the Snow', lvl: 11, zone: 'frost', goal: { kill: ['frostwolf'], n: 10 }, reward: { xp: 3000, gold: 350 },
+    text: 'You came over the ridge? Then you saw the rime wolves. They hunt the pass in packs of five and they are hungry this winter. Ten of them, and the caravans can move again.',
+    done: 'The howling has died down. Good. Up here we pay our debts, so take this.' },
+  { id: 'f2', giver: 'hilde', name: 'The Pale Giants', lvl: 12, zone: 'frost', goal: { kill: ['yeti'], n: 6 }, reward: { xp: 3600, gold: 420, item: { slot: 'chest', r: 2 } },
+    text: 'The pale giants have come down from the peaks. They have never come this low before. Something up there frightened them, and now they frighten us. Bring down six.',
+    done: 'Six giants. I would not have believed it if I had not seen the hides. Ulfar made this coat from one of them.' },
+  { id: 'f3', giver: 'hilde', name: 'Breath of the Wraiths', lvl: 12, zone: 'frost', goal: { kill: ['wraith'], n: 8 }, reward: { xp: 4200, gold: 500, item: { r: 3 } },
+    text: 'The ice wraiths are the cold made angry. Their breath freezes a man where he stands. Shatter eight of them, and take the road east to Cinderwatch when you are done. They need you more than we do.',
+    done: 'The pass is clear. Go east, along the ring road. Tamsin keeps the forge at Cinderwatch. Tell her Hilde sent you.' },
+  // Cinderwatch
+  { id: 'e1', giver: 'tamsin', name: 'Imps in the Bellows', lvl: 13, zone: 'ember', goal: { kill: ['imp'], n: 10 }, reward: { xp: 4800, gold: 550 },
+    text: 'Cinder imps. Little fire-thieves. They crawl in through the bellows and steal the heat from my forge. Ten of them, please, before I lose my temper and my forge both.',
+    done: 'Quiet bellows. You have no idea how happy that makes an old smith.' },
+  { id: 'e2', giver: 'tamsin', name: 'Hounds of Ash', lvl: 14, zone: 'ember', goal: { kill: ['hound'], n: 8 }, reward: { xp: 5400, gold: 620, item: { slot: 'weapon', r: 2 } },
+    text: 'The ash hounds follow the imps like crows follow an army. They have taken two of my apprentices. Eight hounds. Make it quick.',
+    done: 'For my apprentices. I forged this one with them in mind. Use it well.' },
+  { id: 'e3', giver: 'tamsin', name: 'Stone That Burns', lvl: 14, zone: 'ember', goal: { kill: ['brute'], n: 6 }, reward: { xp: 6000, gold: 700, item: { r: 3 } },
+    text: 'The magma brutes are what the mountain sends when it is angry. Break six of them. Then go south along the ring road to Mirebrook. Old Fenwick has been asking for someone like you.',
+    done: 'The mountain is calmer. Go south to Mirebrook. Mind the water there. It remembers everyone who drowned in it.' },
+  // Mirebrook
+  { id: 'm1', giver: 'fenwick', name: 'What the Water Took', lvl: 15, zone: 'mire', goal: { kill: ['drowned'], n: 10 }, reward: { xp: 6600, gold: 800 },
+    text: 'Forty years I have ferried folk across this marsh. Lately the drowned climb back into my boat. Put ten of them back where they belong.',
+    done: 'They stay down now. Mostly. Here, for your trouble.' },
+  { id: 'm2', giver: 'fenwick', name: 'Lurkers Below', lvl: 16, zone: 'mire', goal: { kill: ['lurker'], n: 8 }, reward: { xp: 7400, gold: 880, item: { slot: 'boots', r: 3 } },
+    text: 'The bog lurkers wait under the moss until you step on them. Eight of them. Take these waders when you come back. You will need dry feet where you are going.',
+    done: 'Good. Your feet are still attached. Take the waders, and keep them.' },
+  { id: 'm3', giver: 'fenwick', name: 'The Horror of the Reeds', lvl: 16, zone: 'mire', goal: { kill: ['horror'], n: 5 }, reward: { xp: 8200, gold: 950, item: { r: 3 } },
+    text: 'Something with too many legs nests in the deep reeds. Five of them. Do not go alone if you can help it.',
+    done: 'You came back. Not everyone does. Now listen: west of here, the land breaks into crystal. That is where all of this starts.' },
+  { id: 's1', giver: 'fenwick', name: 'Knights of the Void', lvl: 17, zone: 'spire', goal: { kill: ['voidknight', 'shade'], n: 12 }, reward: { xp: 9500, gold: 1100, item: { r: 3 } },
+    text: 'In the Shattered Spire to the west, knights in black armor guard shards of a fallen star. They are not men any more. Twelve of them, knights or shades, and the way to the heart of the Spire is open.',
+    done: 'The way is open. You know what waits at the end. I saw it once, from my boat, on a night with no moon.' },
+  { id: 's2', giver: 'fenwick', name: 'The Shardbound', lvl: 18, zone: 'spire', goal: { kill: ['boss2'], n: 1 }, reward: { xp: 20000, gold: 3000, item: { r: 4 } },
+    text: 'Nharzul. A star fell, and something climbed out of it, and wore the shards like a crown. It is the reason the dead walk and the mountains burn. End it. Take everyone you trust.',
+    done: 'The stars look right again. I have kept this for whoever finished the job. I never thought it would be someone I had met.' },
 ];
+// each quest unlocks after the giver's previous one
+for (const g of new Set(QUESTS.map((q) => q.giver))) {
+  let prev = null;
+  for (const q of QUESTS) if (q.giver === g && !q.repeat) { if (!('prev' in q)) q.prev = prev; prev = q.id; }
+}
 export const QUEST_BY_ID = Object.fromEntries(QUESTS.map((q) => [q.id, q]));
 export function questState(pq, q) {
   if (pq.a && q.id in pq.a) return pq.a[q.id] >= q.goal.n ? 'ready' : 'active';
   if (!q.repeat && pq.d && pq.d.includes(q.id)) return 'done';
-  const i = QUESTS.indexOf(q);
-  if (q.repeat) { if (!pq.d.includes('q7')) return 'locked'; }
-  else if (i > 0 && !pq.d.includes(QUESTS[i - 1].id)) return 'locked';
+  if (q.prev && !pq.d.includes(q.prev)) return 'locked';
   return 'available';
 }
-// What the elder's head marker should show for this player.
-export function npcMarker(pq, lvl) {
+// What a quest giver's head marker should show for this player.
+export function npcMarker(pq, lvl, giver = 'maren') {
   let m = null;
   for (const q of QUESTS) {
+    if (q.giver !== giver) continue;
     const s = questState(pq, q);
     if (s === 'ready') return 'ready';
     if (s === 'available') m = lvl >= q.lvl ? (m === 'avail' ? m : 'avail') : (m || 'low');
   }
   return m;
 }
+
+// ---------------------------------------------------------------- shops
+export const SHOP_PRICES = { potion: POTION_COST, bag: 800, stashup: 1200, fury: 250, stone: 250, mystic: 2500 };
+export const SHOPS = {
+  borin: { sell: ['potion', 'crate'] },
+  ulfar: { sell: ['potion', 'crate', 'bag'], stock: { n: 4, r: 2, il: 12 } },
+  varek: { sell: ['potion', 'fury', 'stone', 'stashup'], stock: { n: 3, r: 3, il: 14 } },
+  yselle: { sell: ['potion', 'mystic'], stock: { n: 3, r: 3, il: 16, leg: true } },
+};
+export const SHOP_INFO = {
+  potion: { name: 'Healing Potion', desc: 'Restores 45% of your life.' },
+  crate: { name: 'Sealed crate', desc: 'A random magic or better item for your level. Pick the slot.' },
+  mystic: { name: 'Mystic coffer', desc: 'Always epic, with a 30% chance of a legendary. Pick the slot.' },
+  bag: { name: 'Bigger bags', desc: '+6 bag slots, for good. Up to 36 slots.' },
+  stashup: { name: 'Bigger chest', desc: '+12 chest slots, for good. Up to 54 slots.' },
+  fury: { name: 'Elixir of Fury', desc: '+25% damage for 5 minutes.' },
+  stone: { name: 'Elixir of Stone', desc: '+40% armor for 5 minutes.' },
+};
 
 // ---------------------------------------------------------------- stats
 export function computeStats(p) {
@@ -377,6 +484,25 @@ export class World {
       }
     }
     for (const [x, z] of [[-3.5, -3.5], [3.5, 3.5], [3.5, -3.5], [-3.5, 3.5]]) this.addObs({ k: 'lamp', x, z, r: 0.25 });
+    this.addObs({ k: 'chest', x: -6.5, z: 4.5, r: 0.75, town: 'town' });
+    this.addObs({ k: 'waystone', x: 6.5, z: 4.5, r: 0.8, town: 'town' });
+    // --- the three outpost towns on the ring road
+    for (const t of TOWNS) {
+      if (t.id === 'town') continue;
+      const P = 13.5;
+      for (let a = 0; a < Math.PI * 2; a += 1.05 / P) {
+        if (Math.min(Math.abs(Math.sin(a)), Math.abs(Math.cos(a))) * P < 3.6) continue;
+        this.addObs({ k: 'post', x: t.x + Math.cos(a) * P, z: t.z + Math.sin(a) * P, r: 0.45, h: 2.6 + R() * 0.7, town: t.id });
+      }
+      for (let g = 0; g < 4; g++) {
+        const a = g * Math.PI / 2;
+        for (const sg of [-1, 1]) this.addObs({ k: 'torch', x: t.x + Math.cos(a) * 15.5 - Math.sin(a) * 3 * sg, z: t.z + Math.sin(a) * 15.5 + Math.cos(a) * 3 * sg, r: 0.2, c: false });
+      }
+      for (const [hx, hz] of [[-6.6, -6.6], [6.6, -6.6], [-6.6, 6.6]]) this.addObs({ k: 'house', x: t.x + hx, z: t.z + hz, box: true, hw: 2.2, hd: 1.8, town: t.id });
+      this.addObs({ k: 'waystone', x: t.x, z: t.z, r: 0.8, town: t.id });
+      this.addObs({ k: 'chest', x: t.x + 4, z: t.z + 3.8, r: 0.75, town: t.id });
+      this.addObs({ k: 'lamp', x: t.x - 3, z: t.z + 3, r: 0.25 });
+    }
 
     // --- boss arena (west)
     const A = BOSS_ARENA;
@@ -387,20 +513,38 @@ export class World {
     }
     for (const s of [-1, 1]) this.addObs({ k: 'brazier', x: A.x + 10, z: A.z + 4.5 * s, r: 0.6 });
     this.addObs({ k: 'throne', x: A.x - 9.5, z: A.z, box: true, hw: 1.4, hd: 2.2 });
+    // --- the Shardbound's arena (far west, outer lands)
+    const A2 = BOSS_ARENA2;
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      if (Math.abs(angDiff(a, 0)) < 0.45) continue;
+      this.addObs({ k: 'crystal', x: A2.x + Math.cos(a) * A2.r, z: A2.z + Math.sin(a) * A2.r, r: 1.0, s: 1.6 + R() * 0.8, rot: R() * 6 });
+    }
+    for (const sg of [-1, 1]) this.addObs({ k: 'brazier', x: A2.x + 11, z: A2.z + 5 * sg, r: 0.6, tint: 'void' });
+    // --- a ridge of rock separates the old realm from the outer lands; the roads pass through
+    for (let a = 0; a < Math.PI * 2; a += 0.028) {
+      const nearRoad = [-Math.PI / 2, 0, Math.PI / 2].some((ax) => Math.abs(angDiff(a, ax)) * 147 < 9);
+      if (nearRoad) continue;
+      const rad = 147 + rr(-1.5, 1.5), sc = rr(2.6, 4);
+      this.addObs({ k: 'ridge', x: Math.cos(a) * rad, z: Math.sin(a) * rad, r: sc, s: sc, rot: R() * 6 });
+    }
 
     // --- camps
-    const campDefs = { meadow: 14, thorn: 14, grave: 14, crypt: 7 };
-    const qAngle = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2 };
+    const campDefs = { meadow: 14, thorn: 14, grave: 14, crypt: 7, frost: 12, ember: 12, mire: 12, spire: 9 };
+    const qAngle = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2, ember: 0, mire: Math.PI / 2, spire: Math.PI, frost: -Math.PI / 2 };
+    const OUTER = { frost: 1, ember: 1, mire: 1, spire: 1 };
+    const nearTown = (x, z, gap) => TOWNS.some((t) => d2(x, z, t.x, t.z) < (t.r + gap) * (t.r + gap));
+    const nearArena = (x, z, gap) => ARENAS.some((a) => d2(x, z, a.x, a.z) < (a.r + gap) * (a.r + gap));
     let campId = 0;
     for (const zn in campDefs) {
       let made = 0, tries = 0;
       while (made < campDefs[zn] && tries++ < 4000) {
         const a = qAngle[zn] + rr(-0.72, 0.72);
-        const rad = rr(34, zn === 'crypt' ? 96 : 126);
+        const rad = OUTER[zn] ? rr(156, 218) : rr(34, zn === 'crypt' ? 96 : 126);
         const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
         if (zoneAt(x, z) !== zn) continue;
         if (roadDist(x, z) < 6) continue;
-        if (d2(x, z, A.x, A.z) < 26 * 26) continue;
+        if (nearArena(x, z, 12) || nearTown(x, z, 14)) continue;
         if (this.camps.some((c) => d2(c.x, c.z, x, z) < 17 * 17)) continue;
         if (!this.free(x, z, 3)) continue;
         const lvl = zoneLevel(x, z);
@@ -409,7 +553,7 @@ export class World {
         const n = types.length;
         for (let i = 0; i < n; i++) {
           const ang = (i / n) * Math.PI * 2 + R();
-          camp.mem.push({ type: types[i], lvl: clamp(lvl + (R() < 0.25 ? 1 : 0), 1, 10), ox: Math.cos(ang) * rr(1.5, 3.5), oz: Math.sin(ang) * rr(1.5, 3.5) });
+          camp.mem.push({ type: types[i], lvl: clamp(lvl + (R() < 0.25 ? 1 : 0), 1, OUTER[zn] ? 20 : 10), ox: Math.cos(ang) * rr(1.5, 3.5), oz: Math.sin(ang) * rr(1.5, 3.5) });
         }
         if (zn === 'thorn' && types.includes('goblin')) {
           this.addObs({ k: 'tent', x: x + rr(-4, 4), z: z + rr(3, 5) * (R() < 0.5 ? -1 : 1), r: 1.6 });
@@ -426,6 +570,10 @@ export class World {
       this.camps.push({ id: campId++, x, z, zone: 'crypt', lvl: 10, mem: [{ type: 'guard', lvl: 10, ox: 0, oz: 0 }, { type: 'archer', lvl: 9, ox: rr(-3, 3), oz: rr(-3, 3) }] });
     }
     this.camps.push({ id: campId++, x: A.x - 3, z: A.z, zone: 'crypt', lvl: 10, boss: true, mem: [{ type: 'boss', lvl: 10, ox: 0, oz: 0 }] });
+    for (const [x, z] of [[-180, 7], [-180, -7], [-186, 0]]) {
+      this.camps.push({ id: campId++, x, z, zone: 'spire', lvl: 20, mem: [{ type: 'voidknight', lvl: 20, ox: 0, oz: 0 }, { type: 'shade', lvl: 19, ox: rr(-3, 3), oz: rr(-3, 3) }] });
+    }
+    this.camps.push({ id: campId++, x: A2.x - 3, z: A2.z, zone: 'spire', lvl: 20, boss: true, mem: [{ type: 'boss2', lvl: 20, ox: 0, oz: 0 }] });
 
     // --- scenery with collision
     const scatter = (zn, count, kinds, rmin = TOWN_R + 6, rmax = 136, campGap = 8, roadGap = 4.5) => {
@@ -437,7 +585,8 @@ export class World {
         if (zoneAt(x, z) !== zn) continue;
         if (roadDist(x, z) < roadGap) continue;
         if (this.camps.some((c) => d2(c.x, c.z, x, z) < campGap * campGap)) continue;
-        if (d2(x, z, A.x, A.z) < (A.r + 3) * (A.r + 3)) continue;
+        if (nearArena(x, z, 3) || nearTown(x, z, 4)) continue;
+        if (rad > 140 && rad < 154) continue;
         const kd = kinds[Math.floor(R() * kinds.length)];
         const s = rr(kd.s[0], kd.s[1]);
         const r = kd.r * s;
@@ -450,9 +599,14 @@ export class World {
     scatter('thorn', 420, [{ k: 'pine', r: 0.6, s: [0.8, 1.5] }, { k: 'pine', r: 0.6, s: [1, 1.7] }, { k: 'pine', r: 0.6, s: [0.7, 1.2] }, { k: 'rock', r: 1.0, s: [0.6, 1.4] }]);
     scatter('grave', 230, [{ k: 'grave', r: 0.45, s: [0.8, 1.2] }, { k: 'grave', r: 0.45, s: [0.8, 1.2] }, { k: 'grave', r: 0.45, s: [0.9, 1.3] }, { k: 'deadtree', r: 0.5, s: [0.9, 1.6] }, { k: 'rock', r: 1, s: [0.6, 1.2] }], TOWN_R + 6, 136, 6, 3.5);
     scatter('crypt', 150, [{ k: 'ruin', r: 0.8, s: [0.8, 1.4] }, { k: 'rock', r: 1, s: [0.8, 1.8] }, { k: 'deadtree', r: 0.5, s: [1, 1.7] }]);
+    const O = [152, 222];
+    scatter('frost', 260, [{ k: 'snowpine', r: 0.6, s: [0.9, 1.6] }, { k: 'snowpine', r: 0.6, s: [0.8, 1.3] }, { k: 'icerock', r: 1.0, s: [0.7, 1.8] }], ...O);
+    scatter('ember', 220, [{ k: 'ashtree', r: 0.5, s: [0.9, 1.7] }, { k: 'lavarock', r: 1.0, s: [0.7, 1.9] }, { k: 'lavarock', r: 1.0, s: [0.6, 1.2] }], ...O);
+    scatter('mire', 260, [{ k: 'bogtree', r: 0.6, s: [0.9, 1.6] }, { k: 'reeds', r: 0.5, s: [0.8, 1.3] }, { k: 'reeds', r: 0.5, s: [0.8, 1.3] }, { k: 'rock', r: 1, s: [0.6, 1.2] }], ...O);
+    scatter('spire', 200, [{ k: 'crystal', r: 0.7, s: [0.8, 2.0] }, { k: 'ruin', r: 0.8, s: [0.8, 1.4] }, { k: 'rock', r: 1, s: [0.8, 1.8] }], ...O);
     // mountains ring the realm
-    for (let a = 0; a < Math.PI * 2; a += 0.045) {
-      const rad = rr(142, 150);
+    for (let a = 0; a < Math.PI * 2; a += 0.03) {
+      const rad = rr(229, 238);
       const s = rr(3.5, 7);
       this.addObs({ k: 'cliff', x: Math.cos(a) * rad, z: Math.sin(a) * rad, r: s, s, rot: R() * 6, c: false });
     }
@@ -509,7 +663,11 @@ function campTypes(zn, lvl, R) {
     if (zn === 'meadow') out.push(lvl <= 1 ? 'wolf' : lvl === 2 ? (x < 0.6 ? 'wolf' : 'boar') : (x < 0.75 ? 'boar' : 'wolf'));
     else if (zn === 'thorn') out.push(lvl <= 4 ? (x < 0.65 ? 'goblin' : 'shaman') : lvl === 5 ? (x < 0.5 ? 'spider' : x < 0.8 ? 'goblin' : 'shaman') : (x < 0.7 ? 'spider' : 'shaman'));
     else if (zn === 'grave') out.push(lvl <= 7 ? (x < 0.6 ? 'skeleton' : 'archer') : (x < 0.5 ? 'ghoul' : x < 0.8 ? 'skeleton' : 'archer'));
-    else out.push(x < 0.4 ? 'ghoul' : x < 0.7 ? 'archer' : 'skeleton');
+    else if (zn === 'crypt') out.push(x < 0.4 ? 'ghoul' : x < 0.7 ? 'archer' : 'skeleton');
+    else if (zn === 'frost') out.push(lvl <= 11 ? (x < 0.7 ? 'frostwolf' : 'wraith') : lvl === 12 ? (x < 0.4 ? 'frostwolf' : x < 0.7 ? 'yeti' : 'wraith') : (x < 0.5 ? 'yeti' : 'wraith'));
+    else if (zn === 'ember') out.push(lvl <= 13 ? (x < 0.6 ? 'imp' : 'hound') : lvl === 14 ? (x < 0.35 ? 'imp' : x < 0.7 ? 'hound' : 'brute') : (x < 0.5 ? 'brute' : x < 0.75 ? 'hound' : 'imp'));
+    else if (zn === 'mire') out.push(lvl <= 15 ? (x < 0.7 ? 'drowned' : 'lurker') : lvl === 16 ? (x < 0.4 ? 'lurker' : x < 0.7 ? 'drowned' : 'horror') : (x < 0.5 ? 'horror' : 'lurker'));
+    else out.push(x < 0.55 ? 'voidknight' : 'shade');
   }
   // goblin camps always have at least one cutter so they get a tent
   if (zn === 'thorn' && lvl <= 4 && !out.includes('goblin')) out[0] = 'goblin';
@@ -524,9 +682,9 @@ function sanitizeItem(it, cls) {
   o.name = String(it.name || o.base).slice(0, 48);
   if (o.slot === 'weapon') {
     o.cls = CLASS_LIST.includes(it.cls) ? it.cls : cls;
-    o.dmin = clamp(num(it.dmin, 2), 1, 120); o.dmax = clamp(num(it.dmax, 4), o.dmin + 1, 200);
+    o.dmin = clamp(num(it.dmin, 2), 1, 240); o.dmax = clamp(num(it.dmax, 4), o.dmin + 1, 400);
   }
-  if (it.armor) o.armor = clamp(num(it.armor), 0, 140);
+  if (it.armor) o.armor = clamp(num(it.armor), 0, 300);
   if (it.aff && typeof it.aff === 'object') for (const k in AFFIX) if (k in it.aff) o.aff[k] = clamp(num(it.aff[k]), 0, AFFIX_CAP[k]);
   o.v = itemValue(o);
   return o;
@@ -534,8 +692,13 @@ function sanitizeItem(it, cls) {
 export function sanitizeSave(b, cls) {
   if (!b || typeof b !== 'object' || b.cls !== cls) return null;
   const lvl = clamp(num(b.lvl, 1) | 0, 1, MAX_LEVEL);
-  const out = { lvl, xp: clamp(num(b.xp) | 0, 0, xpNeed(lvl) - 1), gold: clamp(num(b.gold) | 0, 0, 1e7), pots: clamp(num(b.pots, 3) | 0, 0, MAX_POTIONS), inv: [], eq: {}, q: { a: {}, d: [] } };
-  for (let i = 0; i < INV_SIZE; i++) out.inv.push(Array.isArray(b.inv) ? sanitizeItem(b.inv[i], cls) : null);
+  const out = { lvl, xp: clamp(num(b.xp) | 0, 0, xpNeed(lvl) - 1), gold: clamp(num(b.gold) | 0, 0, 1e8), pots: clamp(num(b.pots, 3) | 0, 0, MAX_POTIONS), inv: [], stash: [], eq: {}, q: { a: {}, d: [] }, wp: ['town'], home: 'town' };
+  const bag = clamp(Array.isArray(b.inv) ? b.inv.length : INV_SIZE, INV_SIZE, INV_MAX);
+  for (let i = 0; i < bag; i++) out.inv.push(Array.isArray(b.inv) ? sanitizeItem(b.inv[i], cls) : null);
+  const st = clamp(Array.isArray(b.stash) ? b.stash.length : STASH_SIZE, STASH_SIZE, STASH_MAX);
+  for (let i = 0; i < st; i++) out.stash.push(Array.isArray(b.stash) ? sanitizeItem(b.stash[i], cls) : null);
+  if (Array.isArray(b.wp)) for (const id of b.wp) if (TOWN_BY_ID[id] && !out.wp.includes(id)) out.wp.push(id);
+  if (TOWN_BY_ID[b.home] && out.wp.includes(b.home)) out.home = b.home;
   if (b.eq && typeof b.eq === 'object') for (const s of SLOTS) { const it = sanitizeItem(b.eq[s], cls); if (it && it.slot === s && (s !== 'weapon' || it.cls === cls)) out.eq[s] = it; }
   if (b.q && typeof b.q === 'object') {
     if (Array.isArray(b.q.d)) out.q.d = b.q.d.filter((id) => QUEST_BY_ID[id] && !QUEST_BY_ID[id].repeat);
@@ -556,6 +719,7 @@ export class Game {
     this.monsters = [];
     this.projs = [];
     this.loot = new Map();
+    this.stock = {};
     this.timers = [];
     this.events = [];
     this.rosterDirty = true;
@@ -578,7 +742,7 @@ export class Game {
     const s = sanitizeSave(save, cls);
     const p = {
       id: this.nextId++, name: nm, cls, lvl: 1, xp: 0, gold: 0, pots: 3,
-      inv: new Array(INV_SIZE).fill(null), eq: {}, q: { a: {}, d: [] },
+      inv: new Array(INV_SIZE).fill(null), stash: new Array(STASH_SIZE).fill(null), eq: {}, q: { a: {}, d: [] }, wp: ['town'], home: 'town',
       x: rnd(-2, 2), z: 4 + rnd(-1, 1), rot: Math.PI, alive: true, deadAt: 0, hp: 1, res: 0,
       cds: [0, 0, 0, 0, 0, 0], lastHurt: -99, lastCombat: -99, lastPosT: this.now, grace: 0, graceUntil: 0,
       invUntil: 0, stunUntil: 0, whirlUntil: 0, whirlNext: 0, buffs: {}, lootDirty: true, invDirty: true, zone: 'town', lastCorr: 0,
@@ -590,6 +754,8 @@ export class Game {
       p.eq.weapon = it;
       const ch = makeItem(1, 0, 'chest', cls); p.eq.chest = ch;
     }
+    if (p.home !== 'town') { const t = TOWN_BY_ID[p.home]; p.x = t.x + rnd(-2, 2); p.z = t.z + 3 + rnd(-0.5, 0.5); }
+    p.zone = zoneAt(p.x, p.z);
     p.st = computeStats(p);
     p.hp = p.st.mhp; p.res = cls === 'warrior' ? 0 : p.st.mres;
     this.players.set(p.id, p);
@@ -608,11 +774,11 @@ export class Game {
     this.rosterDirty = true;
     this.sys(`${p.name} has left.`);
   }
-  saveOf(p) { return { name: p.name, cls: p.cls, lvl: p.lvl, xp: p.xp, gold: p.gold, pots: p.pots, inv: p.inv, eq: p.eq, q: p.q }; }
+  saveOf(p) { return { name: p.name, cls: p.cls, lvl: p.lvl, xp: p.xp, gold: p.gold, pots: p.pots, inv: p.inv, stash: p.stash, eq: p.eq, q: p.q, wp: p.wp, home: p.home }; }
   sendInv(p) {
     p.st = computeStats(p);
     p.hp = Math.min(p.hp, p.st.mhp); p.res = Math.min(p.res, p.st.mres);
-    this.to(p.id, { t: 'inv', lvl: p.lvl, xp: p.xp, need: xpNeed(p.lvl), gold: p.gold, pots: p.pots, inv: p.inv, eq: p.eq, q: p.q, st: p.st });
+    this.to(p.id, { t: 'inv', lvl: p.lvl, xp: p.xp, need: xpNeed(p.lvl), gold: p.gold, pots: p.pots, inv: p.inv, stash: p.stash, eq: p.eq, q: p.q, st: p.st, wp: p.wp, home: p.home });
   }
 
   // ---------- messages from clients
@@ -628,7 +794,10 @@ export class Game {
       case 'unequip': return this.unequip(p, m.s);
       case 'sell': return this.sell(p, num(m.i, -1) | 0, false);
       case 'discard': return this.sell(p, num(m.i, -1) | 0, true);
-      case 'buy': return this.buy(p, m.w, m.s);
+      case 'buy': return this.buy(p, m.w, m.s, m.n, m.o);
+      case 'shop': { if (SHOPS[m.n] && this.nearNpc(p, m.n)) this.to(p.id, this.shopFor(p, m.n)); return; }
+      case 'stash': return this.stashMove(p, m.a, num(m.i, -1) | 0);
+      case 'travel': return this.travel(p, m.to);
       case 'quest': return this.questAction(p, m.a, m.q);
       case 'chat': {
         const text = String(m.m || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 160);
@@ -696,39 +865,114 @@ export class Game {
     p.inv[i] = p.eq[slot]; delete p.eq[slot];
     this.sendInv(p);
   }
-  nearNpc(p, id, r = 9) { const n = NPCS.find((x) => x.id === id); return n && d2(p.x, p.z, n.x, n.z) < r * r; }
+  nearNpc(p, id, r = 9) { const n = NPC_BY_ID[id]; return n && d2(p.x, p.z, n.x, n.z) < r * r; }
+  nearShop(p) { return NPCS.some((n) => n.role === 'shop' && d2(p.x, p.z, n.x, n.z) < 81); }
+  nearObj(p, kind, r = 6) { return this.world.obs.find((o) => o.k === kind && d2(p.x, p.z, o.x, o.z) < r * r); }
   sell(p, i, discard) {
     const it = p.inv[i]; if (!it) return;
-    if (!discard && !this.nearNpc(p, 'borin')) return this.note(p, 'Visit Borin in town to sell.', 'warn');
+    if (!discard && !this.nearShop(p)) return this.note(p, 'Find a trader in town to sell.', 'warn');
     const gold = discard ? Math.max(1, Math.round(it.v * 0.2)) : it.v;
     p.inv[i] = null; p.gold += gold;
     this.to(p.id, { t: 'sold', g: gold, n: it.name, r: it.r, d: discard ? 1 : 0 });
     this.sendInv(p);
   }
-  buy(p, what, slot) {
-    if (!this.nearNpc(p, 'borin')) return;
+  stockOf(npcId) {
+    const def = SHOPS[npcId].stock; if (!def) return null;
+    let st = this.stock[npcId];
+    if (!st || this.now >= st.until) {
+      st = this.stock[npcId] = { until: this.now + 600, items: [], weapons: {} };
+      const slots = SLOTS.slice(1);
+      for (let i = 0; i < def.n; i++) {
+        const r = def.leg && i === 0 ? 4 : def.r;
+        st.items.push({ oid: `${npcId}-${i}`, it: makeItem(def.il, r, pick(slots), 'warrior') });
+      }
+      for (const c of CLASS_LIST) st.weapons[c] = { oid: `${npcId}-w-${c}`, it: makeItem(def.il, def.r, 'weapon', c) };
+    }
+    return st;
+  }
+  shopFor(p, npcId) {
+    const def = SHOPS[npcId]; if (!def) return null;
+    const offers = def.sell.map((k) => ({ k, price: k === 'crate' ? gambleCost(p.lvl) : SHOP_PRICES[k] }));
+    const st = this.stockOf(npcId);
+    if (st) for (const o of [...st.items, st.weapons[p.cls]]) offers.push({ k: 'item', o: o.oid, it: o.it, price: o.it.v * 4 });
+    return { t: 'shop', n: npcId, offers, refresh: st ? Math.ceil(st.until - this.now) : 0 };
+  }
+  buy(p, what, slot, npcId, oid) {
+    npcId = SHOPS[npcId] ? npcId : 'borin';
+    if (!this.nearNpc(p, npcId)) return;
+    const def = SHOPS[npcId];
+    if (what !== 'item' && !def.sell.includes(what)) return;
+    const pay = (cost) => { if (p.gold < cost) { this.note(p, 'Not enough gold.', 'warn'); return false; } p.gold -= cost; return true; };
     if (what === 'potion') {
       if (p.pots >= MAX_POTIONS) return this.note(p, `You can carry at most ${MAX_POTIONS} potions.`, 'warn');
-      if (p.gold < POTION_COST) return this.note(p, 'Not enough gold.', 'warn');
-      p.gold -= POTION_COST; p.pots++;
+      if (!pay(POTION_COST)) return;
+      p.pots++;
       this.to(p.id, { t: 'bought', w: 'potion' });
-    } else if (what === 'gamble') {
+    } else if (what === 'crate' || what === 'gamble' || what === 'mystic') {
       if (!SLOTS.includes(slot)) return;
-      const cost = gambleCost(p.lvl);
-      if (p.gold < cost) return this.note(p, 'Not enough gold.', 'warn');
       const i = this.freeSlot(p); if (i < 0) return this.note(p, 'Your bags are full.', 'warn');
-      p.gold -= cost;
+      if (!pay(what === 'mystic' ? SHOP_PRICES.mystic : gambleCost(p.lvl))) return;
       const x = Math.random();
-      const r = x < 0.03 ? 4 : x < 0.12 ? 3 : x < 0.4 ? 2 : 1;
+      const r = what === 'mystic' ? (x < 0.3 ? 4 : 3) : x < 0.03 ? 4 : x < 0.12 ? 3 : x < 0.4 ? 2 : 1;
       const it = makeItem(p.lvl, r, slot, p.cls);
       p.inv[i] = it;
       this.to(p.id, { t: 'got', it, gamble: 1 });
+    } else if (what === 'bag') {
+      if (p.inv.length >= INV_MAX) return this.note(p, 'Your bags cannot get any bigger.', 'warn');
+      if (!pay(SHOP_PRICES.bag)) return;
+      for (let k = 0; k < 6; k++) p.inv.push(null);
+      this.note(p, `Your bags now hold ${p.inv.length} items.`);
+      this.to(p.id, { t: 'bought', w: 'bag' });
+    } else if (what === 'stashup') {
+      if (p.stash.length >= STASH_MAX) return this.note(p, 'Your chest cannot get any bigger.', 'warn');
+      if (!pay(SHOP_PRICES.stashup)) return;
+      for (let k = 0; k < 12; k++) p.stash.push(null);
+      this.note(p, `Your chest now holds ${p.stash.length} items.`);
+      this.to(p.id, { t: 'bought', w: 'stashup' });
+    } else if (what === 'fury' || what === 'stone') {
+      if (!pay(SHOP_PRICES[what])) return;
+      p.buffs[what] = this.now + 300;
+      this.ev(p.x, p.z, { e: 'fx', k: 'potion', i: p.id, x: p.x, z: p.z });
+      this.to(p.id, { t: 'bought', w: what });
+    } else if (what === 'item') {
+      const st = this.stockOf(npcId); if (!st) return;
+      const o = [...st.items, st.weapons[p.cls]].find((x) => x.oid === oid);
+      if (!o) return this.note(p, 'That item has already been replaced. Have another look.', 'warn');
+      const i = this.freeSlot(p); if (i < 0) return this.note(p, 'Your bags are full.', 'warn');
+      if (!pay(o.it.v * 4)) return;
+      const it = { ...o.it, aff: { ...o.it.aff }, id: ++itemSeq };
+      p.inv[i] = it;
+      this.to(p.id, { t: 'got', it, gamble: 0, bought: 1 });
+    }
+    this.sendInv(p);
+    this.to(p.id, this.shopFor(p, npcId));
+  }
+  stashMove(p, a, i) {
+    if (!this.nearObj(p, 'chest')) return this.note(p, 'Stand next to a chest to use it.', 'warn');
+    if (a === 'put') {
+      const it = p.inv[i]; if (!it) return;
+      const j = p.stash.indexOf(null); if (j < 0) return this.note(p, 'Your chest is full.', 'warn');
+      p.stash[j] = it; p.inv[i] = null;
+    } else if (a === 'take') {
+      const it = p.stash[i]; if (!it) return;
+      const j = this.freeSlot(p); if (j < 0) return this.note(p, 'Your bags are full.', 'warn');
+      p.inv[j] = it; p.stash[i] = null;
     }
     this.sendInv(p);
   }
+  travel(p, to) {
+    const t = TOWN_BY_ID[to];
+    if (!t || !p.alive || !p.wp.includes(to)) return;
+    if (!this.nearObj(p, 'waystone')) return this.note(p, 'Stand next to a waystone to travel.', 'warn');
+    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+    const ws = this.world.obs.find((o) => o.k === 'waystone' && o.town === to);
+    p.x = ws.x + rnd(-1.5, 1.5); p.z = ws.z + 2.5 + rnd(0, 1); p.grace = 9999; p.graceUntil = this.now + 1.5;
+    this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1 });
+    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+  }
   questAction(p, a, qid) {
     const q = QUEST_BY_ID[qid]; if (!q) return;
-    if (!this.nearNpc(p, 'maren', 10)) return;
+    if (!this.nearNpc(p, q.giver, 10)) return;
     const s = questState(p.q, q);
     if (a === 'accept' && s === 'available') {
       if (p.lvl < q.lvl) return this.note(p, `You need level ${q.lvl} for that quest.`, 'warn');
@@ -782,6 +1026,7 @@ export class Game {
     const s = p.st;
     let d = rnd(s.dmin, s.dmax) * mult * (1 + s.power / 100) * (1 + 0.06 * (p.lvl - 1));
     if (p.buffs.warcry > this.now) d *= 1.25;
+    if (p.buffs.fury > this.now) d *= 1.25;
     const crit = Math.random() * 100 < s.crit;
     if (crit) d *= 1.75;
     return [d, crit];
@@ -804,7 +1049,8 @@ export class Game {
   hurtPlayer(p, amount, m) {
     if (!p.alive) return;
     if (this.now < p.invUntil) { this.ev(p.x, p.z, { e: 'miss', i: p.id }); return; }
-    let dr = Math.min(0.75, p.st.armor / (p.st.armor + 40 + 12 * (m ? m.lvl : p.lvl)));
+    const arm = p.st.armor * (p.buffs.stone > this.now ? 1.4 : 1);
+    let dr = Math.min(0.75, arm / (arm + 40 + 12 * (m ? m.lvl : p.lvl)));
     if (p.buffs.warcry > this.now) dr = 1 - (1 - dr) * 0.8;
     const amt = Math.max(1, Math.round(amount * (1 - dr)));
     p.hp -= amt; p.lastHurt = this.now; p.lastCombat = this.now;
@@ -850,7 +1096,7 @@ export class Game {
       if (!m.minion) this.dropLoot(m, p);
     }
     if (m.def.boss) {
-      this.sys(`${m.name} has fallen! The bells of Duskhold ring out.`);
+      this.sys(`${m.name} has fallen!`);
       for (const o of this.monsters) if (o.minion && !o.dead) { o.dead = true; o.deadAt = this.now; this.ev(o.x, o.z, { e: 'die', i: o.id, x: o.x, z: o.z }); }
     }
     m.threat.clear();
@@ -934,7 +1180,7 @@ export class Game {
     if (m.state === 'idle') {
       let best = null, bd = (m.def.aggro * (m.champion ? 1.2 : 1)) ** 2;
       for (const p of this.players.values()) {
-        if (!p.alive || p.zone === 'town') continue;
+        if (!p.alive || isSafe(p.zone)) continue;
         const dd = d2(p.x, p.z, m.x, m.z);
         if (dd < bd) { bd = dd; best = p; }
       }
@@ -957,7 +1203,7 @@ export class Game {
     let tgt = null, tv = -1;
     for (const [pid, v] of m.threat) {
       const p = this.players.get(pid);
-      if (!p || !p.alive || p.zone === 'town') { m.threat.delete(pid); continue; }
+      if (!p || !p.alive || isSafe(p.zone)) { m.threat.delete(pid); continue; }
       if (v > tv) { tv = v; tgt = p; }
     }
     const leash = m.def.boss ? 30 : 32;
@@ -1028,7 +1274,8 @@ export class Game {
         for (let i = 0; i < 4; i++) {
           const a = (i / 4) * Math.PI * 2;
           const [x, z] = this.world.resolve(m.x + Math.cos(a) * 4, m.z + Math.sin(a) * 4, 0.6);
-          const mm = this.spawnMonster(i % 2 ? 'skeleton' : 'archer', 9, x, z, m.camp, true);
+          const mins = m.def.minions || ['skeleton', 'archer'];
+          const mm = this.spawnMonster(mins[i % 2], m.lvl - 1, x, z, m.camp, true);
           this.aggro(mm, pick(near), false);
         }
       }
@@ -1193,10 +1440,15 @@ export class Game {
     }
     for (const p of this.players.values()) {
       p.zone = zoneAt(p.x, p.z);
+      if (TOWN_BY_ID[p.zone] && p.alive) {
+        if (!p.wp.includes(p.zone)) { p.wp.push(p.zone); this.to(p.id, { t: 'wp', town: p.zone }); p.invDirty = true; }
+        if (p.home !== p.zone) { p.home = p.zone; p.invDirty = true; }
+      }
       if (!p.alive) {
         if (now - p.deadAt >= 5) {
           p.alive = true; p.hp = p.st.mhp; p.res = p.cls === 'warrior' ? 0 : p.st.mres;
-          p.x = rnd(-2, 2); p.z = 4 + rnd(-1, 1); p.buffs = {};
+          const ht = TOWN_BY_ID[p.home] || TOWNS[0];
+          p.x = ht.x + rnd(-2, 2); p.z = ht.z + (ht.id === 'town' ? 4 : 3) + rnd(-1, 1); p.buffs = {};
           this.to(p.id, { t: 'setpos', x: p.x, z: p.z, respawn: 1 });
           this.ev(p.x, p.z, { e: 'fx', k: 'respawn', i: p.id, x: p.x, z: p.z });
         }
@@ -1207,7 +1459,7 @@ export class Game {
       if (p.cls === 'warrior') { if (now - p.lastCombat > 5) p.res = Math.max(0, p.res - 6 * dt); }
       else p.res = Math.min(st.mres, p.res + (CLASSES[p.cls].resRegen + (p.cls === 'mage' ? 0.5 * p.lvl : 0)) * dt);
       // health
-      if (p.zone === 'town') p.hp = Math.min(st.mhp, p.hp + st.mhp * (Math.hypot(p.x, p.z) < 5.5 ? 0.3 : 0.06) * dt);
+      if (isSafe(p.zone)) { const tc = TOWN_BY_ID[p.zone]; p.hp = Math.min(st.mhp, p.hp + st.mhp * (Math.hypot(p.x - tc.x, p.z - tc.z) < 5.5 ? 0.3 : 0.06) * dt); }
       else if (now - p.lastHurt > 5) p.hp = Math.min(st.mhp, p.hp + st.mhp * 0.015 * dt);
       if (p.buffs.mend > now) p.hp = Math.min(st.mhp, p.hp + p.mendHps * dt);
       // whirlwind
@@ -1270,7 +1522,7 @@ export class Game {
       const ev = [];
       for (const e of this.events) if (d2(e.x, e.z, p.x, p.z) < ER2) ev.push(e.o);
       const msg = { t: 's', T: r2(now), p: pl, m: mon, e: ev,
-        me: [Math.ceil(p.hp), p.st.mhp, Math.floor(p.res), p.st.mres, p.cds.map((c) => Math.max(0, r2(c - now))), p.buffs.warcry > now ? r2(p.buffs.warcry - now) : 0, p.buffs.mend > now ? r2(p.buffs.mend - now) : 0] };
+        me: [Math.ceil(p.hp), p.st.mhp, Math.floor(p.res), p.st.mres, p.cds.map((c) => Math.max(0, r2(c - now))), p.buffs.warcry > now ? r2(p.buffs.warcry - now) : 0, p.buffs.mend > now ? r2(p.buffs.mend - now) : 0, p.buffs.fury > now ? Math.ceil(p.buffs.fury - now) : 0, p.buffs.stone > now ? Math.ceil(p.buffs.stone - now) : 0] };
       if (p.lootDirty || this.tickN % 10 === 0) {
         p.lootDirty = false;
         const L = [];

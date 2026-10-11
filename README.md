@@ -6,13 +6,19 @@ være i samme verden på én gang.
 
 - **3 klasser:** Warrior (tank, nærkamp), Mage (magi på afstand, area damage)
   og Ranger (bue, kan heale holdet).
-- **4 zoner omkring byen Duskhold:** Whispering Meadow (level 1–3), Thornwood (3–6),
-  Ashen Graveyard (6–9) og Hollow Crypt (9–10).
-- **8 quests** fra Elder Maren, med slutbossen **Morvath, the Hollow King**.
+- **8 zoner og 4 byer:** Inderst ligger Duskhold med Whispering Meadow (level 1–3),
+  Thornwood (3–6), Ashen Graveyard (6–9) og Hollow Crypt (9–10). Bag bjergkammen
+  ligger de ydre lande: Frostpeak (11–13) med byen **Frosthaven**, Emberwaste (13–15)
+  med **Cinderwatch**, Drowned Marsh (15–17) med **Mirebrook** og Shattered Spire (17–20).
+- **Max level 20** og **20 quests** fordelt på fire quest-givere, med to bosser:
+  **Morvath, the Hollow King** og **Nharzul, the Shardbound**.
+- **En kiste i hver by** til at gemme ting i. Alle kister deler indhold.
+- **Waystones** i hver by: rør dem én gang, så kan du rejse hurtigt mellem byerne.
+- **Nye butikker:** større tasker, større kiste, eliksirer (Fury og Stone), mystiske
+  kister med chance for legendary, og sjældne våben og rustninger, der skifter hvert 10. minut.
 - **Loot i 5 sjældenheder** (hvid, blå, gul, lilla og orange). Hver spiller får sit
   eget loot, så I aldrig skændes om det.
-- **Champions** (fjender med blåt skær), en smed der handler, potions og
-  "sealed crates", man kan gamble på.
+- **Champions** (fjender med blåt skær), potions og "sealed crates", man kan gamble på.
 - Party-rammer, chat, minimap, verdenskort, lyd og musik.
 
 ---

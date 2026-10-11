@@ -1,6 +1,6 @@
 // Low-poly models built from primitives, plus the static world (ground, trees, town).
 import * as THREE from 'three';
-import { zoneAt, roadDist, TOWN_R, BOSS_ARENA, NPCS } from '../sim.js';
+import { zoneAt, roadDist, TOWN_R, BOSS_ARENA, BOSS_ARENA2, ARENAS, NPCS, TOWNS, TOWN_BY_ID, INNER_R, WORLD_R } from '../sim.js';
 
 // ---------------------------------------------------------------- helpers
 const C = (c) => new THREE.Color(c);
@@ -67,8 +67,12 @@ function vnoise(x, z) {
   const a = hash(xi, zi), b = hash(xi + 1, zi), c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
-const ZCOL = { meadow: C('#3f6034'), thorn: C('#2a4128'), grave: C('#4a4554'), crypt: C('#3d3a31') };
-const ZCOL2 = { meadow: C('#5c723e'), thorn: C('#394a26'), grave: C('#585164'), crypt: C('#4b463a') };
+const ZCOL = { meadow: C('#3f6034'), thorn: C('#2a4128'), grave: C('#4a4554'), crypt: C('#3d3a31'),
+  frost: C('#b9c4cf'), ember: C('#2e2420'), mire: C('#34422c'), spire: C('#2c2836') };
+const ZCOL2 = { meadow: C('#5c723e'), thorn: C('#394a26'), grave: C('#585164'), crypt: C('#4b463a'),
+  frost: C('#e4ebf0'), ember: C('#4a2a1c'), mire: C('#4a5434'), spire: C('#3e3650') };
+const OUTER_OF = { meadow: 'frost', thorn: 'ember', grave: 'mire', crypt: 'spire' };
+const LAVA = C('#e8480c'), WATER = C('#2a4a48');
 const DIRT = C('#6b5640'), COBBLE = C('#6a625a'), TOWNG = C('#4f5a36'), FLAG = C('#3a3638'), CLIFF = C('#2c2830');
 const ZC_ANG = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2 };
 function angd(a, b) { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return Math.abs(d); }
@@ -78,23 +82,38 @@ export function groundColor(x, z, out) {
   // blend the two nearest zones across their border
   let best = null, second = null, bd = 9, sd = 9;
   for (const k in ZC_ANG) { const d = angd(a, ZC_ANG[k]); if (d < bd) { second = best; sd = bd; best = k; bd = d; } else if (d < sd) { second = k; sd = d; } }
+  const outer = r > INNER_R - 4;
+  if (outer) { best = OUTER_OF[best]; second = OUTER_OF[second]; }
   const n = vnoise(x * 0.08, z * 0.08) * 0.65 + vnoise(x * 0.3, z * 0.3) * 0.35;
   tmpA.copy(ZCOL[best]).lerp(ZCOL2[best], n);
   tmpB.copy(ZCOL[second]).lerp(ZCOL2[second], n);
   const edge = (sd - bd) / 0.25;
   out.copy(tmpA);
   if (edge < 1) out.lerp(tmpB, 0.5 * (1 - edge));
-  // town
+  // details in the outer lands
+  if (outer && best === 'ember') { const v = vnoise(x * 0.3 + 7, z * 0.3); if (v > 0.86) out.lerp(LAVA, Math.min(0.9, (v - 0.86) * 9)); }
+  if (outer && best === 'mire') { const v = vnoise(x * 0.12 + 3, z * 0.12 - 5); if (v > 0.62) out.lerp(WATER, Math.min(0.9, (v - 0.62) * 6)); }
+  // the ridge between the old realm and the outer lands
+  const rg = Math.abs(r - 147);
+  if (rg < 6) out.lerp(CLIFF, (1 - rg / 6) * 0.6);
+  // towns
   if (r < TOWN_R + 3) out.lerp(TOWNG, Math.min(1, (TOWN_R + 3 - r) / 4));
   if (r < 10) out.copy(COBBLE).multiplyScalar(0.85 + vnoise(x * 1.2, z * 1.2) * 0.3);
+  for (const t of TOWNS) {
+    if (t.id === 'town') continue;
+    const tr = Math.hypot(x - t.x, z - t.z);
+    if (tr < t.r + 1) out.lerp(COBBLE, Math.min(1, (t.r + 1 - tr) / 3) * 0.8);
+  }
   // roads
   const rd = r < 10 ? 99 : roadDist(x, z);
   const inTownRoad = r < TOWN_R + 2 && (Math.abs(x) < 2.6 || Math.abs(z) < 2.6);
   if (rd < 3.2 || inTownRoad) out.lerp(DIRT, inTownRoad ? 0.85 : Math.min(1, (3.2 - rd) / 1.2) * (0.75 + 0.25 * n));
-  // boss arena
-  const ar = Math.hypot(x - BOSS_ARENA.x, z - BOSS_ARENA.z);
-  if (ar < BOSS_ARENA.r + 1) out.lerp(FLAG, Math.min(1, (BOSS_ARENA.r + 1 - ar) / 2)).multiplyScalar(0.9 + 0.2 * vnoise(x * 0.9, z * 0.9));
-  if (r > 132) out.lerp(CLIFF, Math.min(1, (r - 132) / 8));
+  // boss arenas
+  for (const A of ARENAS) {
+    const ar = Math.hypot(x - A.x, z - A.z);
+    if (ar < A.r + 1) out.lerp(FLAG, Math.min(1, (A.r + 1 - ar) / 2)).multiplyScalar(0.9 + 0.2 * vnoise(x * 0.9, z * 0.9));
+  }
+  if (r > WORLD_R - 6) out.lerp(CLIFF, Math.min(1, (r - WORLD_R + 6) / 8));
   out.multiplyScalar(0.9 + hash(Math.floor(x * 2), Math.floor(z * 2)) * 0.12);
   return out;
 }
@@ -124,7 +143,7 @@ export function buildWorld(scene, world) {
   const tex = new THREE.CanvasTexture(dc); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
   const groundMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex });
   const TILE = 40, TSEG = 26, c = new THREE.Color();
-  for (let tz = -4; tz < 4; tz++) for (let tx = -4; tx < 4; tx++) {
+  for (let tz = -6; tz < 6; tz++) for (let tx = -6; tx < 6; tx++) {
     const geo = new THREE.PlaneGeometry(TILE, TILE, TSEG, TSEG); geo.rotateX(-Math.PI / 2);
     geo.translate(tx * TILE + TILE / 2, 0, tz * TILE + TILE / 2);
     const pos = geo.attributes.position; const col = new Float32Array(pos.count * 3);
@@ -155,20 +174,35 @@ export function buildWorld(scene, world) {
     lamp: merge([part(new THREE.CylinderGeometry(0.07, 0.1, 2.6, 5), '#2a2420', T(0, 1.3, 0)), part(new THREE.BoxGeometry(0.34, 0.42, 0.34), '#ffcf7a', T(0, 2.75, 0)), part(new THREE.ConeGeometry(0.3, 0.25, 4), '#2a2420', T(0, 3.05, 0, 0, Math.PI / 4, 0))]),
     torch: merge([part(new THREE.CylinderGeometry(0.06, 0.09, 2.2, 5), '#3a2a1c', T(0, 1.1, 0)), part(new THREE.CylinderGeometry(0.18, 0.1, 0.25, 6), '#2a2420', T(0, 2.25, 0))]),
     brazier: merge([part(new THREE.CylinderGeometry(0.55, 0.3, 0.5, 8), '#2e2a28', T(0, 1.1, 0)), part(new THREE.CylinderGeometry(0.08, 0.12, 0.9, 5), '#2e2a28', T(0, 0.45, 0))]),
+    // the outer lands
+    ridge: merge([part(new THREE.DodecahedronGeometry(1, 0), '#4a4450', T(0, 0.55, 0, 0, 0, 0, 1.1, 1.6, 1)), part(new THREE.DodecahedronGeometry(0.7, 0), '#55505c', T(0.55, 1.5, 0.15, 0.4, 0.3, 0)), part(new THREE.DodecahedronGeometry(0.6, 0), '#3e3944', T(-0.6, 0.4, -0.3))]),
+    snowpine: merge([part(new THREE.CylinderGeometry(0.12, 0.2, 1.2, 5), '#4a3424', T(0, 0.6, 0)), part(new THREE.ConeGeometry(1.15, 1.9, 7), '#2a4a3a', T(0, 1.75, 0)), part(new THREE.ConeGeometry(0.95, 0.5, 7), '#eef3f8', T(0, 2.4, 0)), part(new THREE.ConeGeometry(0.85, 1.6, 7), '#30533f', T(0, 2.7, 0)), part(new THREE.ConeGeometry(0.62, 0.45, 7), '#f4f8fc', T(0, 3.3, 0)), part(new THREE.ConeGeometry(0.42, 1.0, 7), '#f4f8fc', T(0, 3.85, 0))]),
+    icerock: merge([part(new THREE.DodecahedronGeometry(1, 0), '#9fb4c8', T(0, 0.3, 0, 0, 0, 0, 1, 0.75, 0.9)), part(new THREE.OctahedronGeometry(0.45, 0), '#c8e4ff', T(0.4, 0.8, 0.1, 0.3, 0, 0.2, 0.7, 1.6, 0.7)), part(new THREE.SphereGeometry(0.75, 7, 3, 0, Math.PI * 2, 0, Math.PI / 2), '#f2f6fa', T(0, 0.55, 0, 0, 0, 0, 1, 0.35, 0.9))]),
+    ashtree: merge([part(new THREE.CylinderGeometry(0.1, 0.24, 2.6, 5), '#1e1a18', T(0, 1.3, 0, 0, 0, 0.1)), part(new THREE.CylinderGeometry(0.05, 0.09, 1.2, 4), '#1e1a18', T(0.4, 2.1, 0, 0, 0, -0.9)), part(new THREE.CylinderGeometry(0.04, 0.08, 1.0, 4), '#1e1a18', T(-0.3, 2.3, 0.1, 0.3, 0, 0.8)), part(new THREE.IcosahedronGeometry(0.12, 0), '#ff6a20', T(0.8, 2.5, 0)), part(new THREE.IcosahedronGeometry(0.1, 0), '#ff8a30', T(-0.65, 2.65, 0.15))]),
+    lavarock: merge([part(new THREE.DodecahedronGeometry(1, 0), '#2a2220', T(0, 0.3, 0, 0, 0, 0, 1, 0.75, 0.9)), part(new THREE.BoxGeometry(1.5, 0.06, 0.12), '#ff5a10', T(0, 0.62, 0.2, 0, 0.5, 0.15)), part(new THREE.BoxGeometry(0.1, 0.05, 1.2), '#ff7a20', T(0.25, 0.64, 0, 0.1, 0, 0))]),
+    bogtree: merge([part(new THREE.CylinderGeometry(0.2, 0.45, 2.0, 6), '#3a3426', T(0, 1.0, 0, 0.08, 0, 0)), part(new THREE.IcosahedronGeometry(1.15, 0), '#3e5a2a', T(0, 2.4, 0, 0, 0, 0, 1.3, 0.6, 1.3)), part(new THREE.CylinderGeometry(0.02, 0.02, 1.4, 3), '#6a7a4a', T(0.8, 1.6, 0.2)), part(new THREE.CylinderGeometry(0.02, 0.02, 1.2, 3), '#6a7a4a', T(-0.7, 1.7, -0.3)), part(new THREE.CylinderGeometry(0.02, 0.02, 1.1, 3), '#6a7a4a', T(0.1, 1.7, 0.9))]),
+    reeds: merge([0, 1, 2, 3, 4, 5, 6].map((i) => part(new THREE.CylinderGeometry(0.03, 0.04, 1.4 + (i % 3) * 0.35, 3), i % 2 ? '#6a7a3a' : '#7a8a46', T(Math.cos(i * 2.4) * 0.35, 0.7 + (i % 3) * 0.17, Math.sin(i * 2.4) * 0.35, (i % 3 - 1) * 0.12, 0, (i % 2 - 0.5) * 0.2))).concat([part(new THREE.CylinderGeometry(0.06, 0.06, 0.3, 5), '#5a3a24', T(0.2, 1.55, 0.1)), part(new THREE.CylinderGeometry(0.06, 0.06, 0.3, 5), '#5a3a24', T(-0.25, 1.75, -0.2))])),
+    crystal: merge([part(new THREE.OctahedronGeometry(0.55, 0), '#8a5ad8', T(0, 1.1, 0, 0, 0, 0.1, 0.8, 2.2, 0.8)), part(new THREE.OctahedronGeometry(0.35, 0), '#b088ff', T(0.5, 0.6, 0.2, 0, 0.5, -0.5, 0.8, 1.8, 0.8)), part(new THREE.OctahedronGeometry(0.3, 0), '#6a3ab8', T(-0.4, 0.5, -0.2, 0.4, 0, 0.5, 0.8, 1.6, 0.8)), part(new THREE.DodecahedronGeometry(0.6, 0), '#2e2838', T(0, 0.1, 0, 0, 0, 0, 1.2, 0.4, 1.2))]),
+    chest: merge([part(new THREE.BoxGeometry(1.3, 0.7, 0.8), '#6a4424', T(0, 0.35, 0)), part(new THREE.CylinderGeometry(0.4, 0.4, 1.3, 8, 1, false, 0, Math.PI), '#7a5030', T(0, 0.7, 0, 0, 0, Math.PI / 2)), part(new THREE.BoxGeometry(1.36, 0.1, 0.86), '#b48d55', T(0, 0.68, 0)), part(new THREE.BoxGeometry(0.1, 0.75, 0.86), '#b48d55', T(-0.45, 0.4, 0)), part(new THREE.BoxGeometry(0.1, 0.75, 0.86), '#b48d55', T(0.45, 0.4, 0)), part(new THREE.BoxGeometry(0.2, 0.24, 0.06), '#e8c060', T(0, 0.62, 0.42))]),
+    waystone: merge([part(new THREE.CylinderGeometry(1.3, 1.5, 0.3, 8), '#5a5662', T(0, 0.15, 0)), part(new THREE.BoxGeometry(0.75, 3.0, 0.5), '#6a6676', T(0, 1.75, 0, 0, 0, 0.03)), part(new THREE.ConeGeometry(0.5, 0.6, 4), '#6a6676', T(0, 3.5, 0, 0, Math.PI / 4, 0)), part(new THREE.BoxGeometry(0.3, 0.3, 0.06), '#7ad8ff', T(0, 2.4, 0.27, 0, 0, Math.PI / 4)), part(new THREE.BoxGeometry(0.3, 0.3, 0.06), '#7ad8ff', T(0, 2.4, -0.27, 0, 0, Math.PI / 4)), part(new THREE.BoxGeometry(0.06, 0.6, 0.06), '#7ad8ff', T(0, 1.6, 0.27)), part(new THREE.BoxGeometry(0.06, 0.6, 0.06), '#7ad8ff', T(0, 1.6, -0.27))]),
   };
+  const EMIS = { lamp: 0x553300, crystal: 0x2a1050, lavarock: 0x1a0800, ashtree: 0x100400, waystone: 0x0a1a28, icerock: 0x0a1018 };
+  const UNSCALED = new Set(['tower', 'lamp', 'torch', 'brazier', 'tent', 'crypt', 'chest', 'waystone']);
+  const faceTown = (o) => { const t = TOWN_BY_ID[o.town]; return t ? Math.atan2(t.x - o.x, t.z - o.z) : 0; };
   const groups = {};
   for (const o of world.obs) (groups[o.k] = groups[o.k] || []).push(o);
   for (const k in KIND) {
     const list = groups[k]; if (!list || !list.length) continue;
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: k === 'lamp' ? 0x553300 : 0x000000 });
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: EMIS[k] || 0x000000 });
     chunked(scene, KIND[k], mat, list, (o, d3, tint) => {
       const s = o.s || 1;
       d3.position.set(o.x, 0, o.z);
-      d3.rotation.set(0, k === 'crypt' ? 0 : (o.rot ?? Math.atan2(o.x, o.z)), 0);
+      d3.rotation.set(0, k === 'crypt' ? 0 : k === 'chest' ? faceTown(o) : k === 'waystone' ? 0 : (o.rot ?? Math.atan2(o.x, o.z)), 0);
       if (k === 'post') d3.scale.set(1, o.h || 2.8, 1);
       else if (k === 'pillar') d3.scale.set(1, o.h || 6, 1);
       else if (k === 'cliff') d3.scale.set(s, s * 0.9, s);
-      else if (k === 'tower' || k === 'lamp' || k === 'torch' || k === 'brazier' || k === 'tent' || k === 'crypt') d3.scale.set(1, 1, 1);
+      else if (k === 'ridge') d3.scale.set(s, s * 1.15, s);
+      else if (UNSCALED.has(k)) d3.scale.set(1, 1, 1);
       else d3.scale.set(s, s, s);
       const v = 0.85 + Math.random() * 0.3;
       tint.setRGB(v, v * (0.95 + Math.random() * 0.1), v);
@@ -178,19 +212,22 @@ export function buildWorld(scene, world) {
   {
     let seed = 777; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     const COVER = {
-      grass: { geo: merge([part(new THREE.ConeGeometry(0.06, 0.55, 3), '#5f7a3a', T(0, 0.27, 0, 0.15, 0, 0.1)), part(new THREE.ConeGeometry(0.06, 0.45, 3), '#6b8540', T(0.12, 0.22, 0.05, -0.1, 0, -0.25)), part(new THREE.ConeGeometry(0.05, 0.4, 3), '#55703a', T(-0.1, 0.2, -0.05, 0.2, 0, 0.3))]), zones: { meadow: 1900, thorn: 500, grave: 300 } },
+      grass: { geo: merge([part(new THREE.ConeGeometry(0.06, 0.55, 3), '#5f7a3a', T(0, 0.27, 0, 0.15, 0, 0.1)), part(new THREE.ConeGeometry(0.06, 0.45, 3), '#6b8540', T(0.12, 0.22, 0.05, -0.1, 0, -0.25)), part(new THREE.ConeGeometry(0.05, 0.4, 3), '#55703a', T(-0.1, 0.2, -0.05, 0.2, 0, 0.3))]), zones: { meadow: 1900, thorn: 500, grave: 300, mire: 1100 } },
       flower: { geo: merge([part(new THREE.CylinderGeometry(0.015, 0.015, 0.35, 3), '#4a6a30', T(0, 0.17, 0)), part(new THREE.IcosahedronGeometry(0.08, 0), '#ffffff', T(0, 0.37, 0))]), zones: { meadow: 700 }, colors: ['#e8d36a', '#d8a0d8', '#f0f0f0', '#e8b0a0'] },
-      shroom: { geo: merge([part(new THREE.CylinderGeometry(0.05, 0.07, 0.25, 5), '#e8dcc8', T(0, 0.12, 0)), part(new THREE.SphereGeometry(0.16, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2), '#ffffff', T(0, 0.24, 0))]), zones: { thorn: 260, crypt: 60 }, colors: ['#b8402a', '#c8a878', '#a8502a'] },
-      bones: { geo: merge([part(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 4), '#d8d0bc', T(0, 0.05, 0, 0, 0, Math.PI / 2)), part(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 4), '#d8d0bc', T(0.05, 0.05, 0.1, 0, 0.9, Math.PI / 2)), part(new THREE.IcosahedronGeometry(0.11, 0), '#e8e0cc', T(-0.25, 0.1, 0.05))]), zones: { grave: 420, crypt: 360 } },
-      pebble: { geo: merge([part(new THREE.DodecahedronGeometry(0.18, 0), '#6a6660', T(0, 0.06, 0, 0, 0, 0, 1, 0.6, 1))]), zones: { meadow: 200, thorn: 200, grave: 260, crypt: 380 } },
+      shroom: { geo: merge([part(new THREE.CylinderGeometry(0.05, 0.07, 0.25, 5), '#e8dcc8', T(0, 0.12, 0)), part(new THREE.SphereGeometry(0.16, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2), '#ffffff', T(0, 0.24, 0))]), zones: { thorn: 260, crypt: 60, mire: 260 }, colors: ['#b8402a', '#c8a878', '#a8502a'] },
+      bones: { geo: merge([part(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 4), '#d8d0bc', T(0, 0.05, 0, 0, 0, Math.PI / 2)), part(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 4), '#d8d0bc', T(0.05, 0.05, 0.1, 0, 0.9, Math.PI / 2)), part(new THREE.IcosahedronGeometry(0.11, 0), '#e8e0cc', T(-0.25, 0.1, 0.05))]), zones: { grave: 420, crypt: 360, spire: 200, ember: 120 } },
+      pebble: { geo: merge([part(new THREE.DodecahedronGeometry(0.18, 0), '#6a6660', T(0, 0.06, 0, 0, 0, 0, 1, 0.6, 1))]), zones: { meadow: 200, thorn: 200, grave: 260, crypt: 380, frost: 700, ember: 500, spire: 400 } },
+      shard: { geo: merge([part(new THREE.OctahedronGeometry(0.12, 0), '#ffffff', T(0, 0.15, 0, 0, 0, 0, 0.8, 2.2, 0.8)), part(new THREE.OctahedronGeometry(0.08, 0), '#ffffff', T(0.12, 0.1, 0.05, 0, 0, 0.5, 0.8, 2, 0.8))]), zones: { spire: 380, frost: 260 } },
     };
-    const QA = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2 };
+    const QA = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2, frost: -Math.PI / 2, ember: 0, mire: Math.PI / 2, spire: Math.PI };
+    const OUTER = new Set(['frost', 'ember', 'mire', 'spire']);
     for (const k in COVER) {
       const cv = COVER[k]; const list = [];
       for (const zn in cv.zones) {
         let made = 0, tries = 0;
+        const [r0, r1] = OUTER.has(zn) ? [152, 222] : [26, 134];
         while (made < cv.zones[zn] && tries++ < cv.zones[zn] * 6) {
-          const a = QA[zn] + (R() - 0.5) * 1.58, r = Math.sqrt(26 * 26 + R() * (134 * 134 - 26 * 26));
+          const a = QA[zn] + (R() - 0.5) * 1.58, r = Math.sqrt(r0 * r0 + R() * (r1 * r1 - r0 * r0));
           const x = Math.cos(a) * r, z = Math.sin(a) * r;
           if (zoneAt(x, z) !== zn || roadDist(x, z) < 3) continue;
           if (!world.free(x, z, 0.3, 0.1)) continue;
@@ -205,7 +242,10 @@ export function buildWorld(scene, world) {
         d3.position.set(it.x, 0, it.z); d3.rotation.set(0, R() * Math.PI * 2, 0); d3.scale.set(s, s * (k === 'grass' ? 0.8 + R() * 0.6 : 1), s);
         const zn = it.zn;
         if (cv.colors) c2.set(cv.colors[Math.floor(R() * cv.colors.length)]);
-        else if (k === 'grass') c2.setRGB(zn === 'grave' ? 0.65 : zn === 'thorn' ? 0.7 : 0.95, zn === 'grave' ? 0.7 : 0.9 + R() * 0.15, zn === 'grave' ? 0.75 : 0.8);
+        else if (k === 'grass') { if (zn === 'mire') c2.setRGB(0.75, 0.8 + R() * 0.15, 0.55); else c2.setRGB(zn === 'grave' ? 0.65 : zn === 'thorn' ? 0.7 : 0.95, zn === 'grave' ? 0.7 : 0.9 + R() * 0.15, zn === 'grave' ? 0.75 : 0.8); }
+        else if (k === 'shard') { if (zn === 'frost') c2.setRGB(0.75, 0.9, 1.1); else c2.setRGB(0.6 + R() * 0.2, 0.4, 1.0); }
+        else if (k === 'pebble' && zn === 'frost') { const v = 1.3 + R() * 0.2; c2.setRGB(v, v, v * 1.05); }
+        else if (k === 'pebble' && zn === 'ember') { const v = 0.4 + R() * 0.2; c2.setRGB(v, v * 0.8, v * 0.7); }
         else { const v = 0.8 + R() * 0.3; c2.setRGB(v, v, v); }
       });
     }
@@ -214,8 +254,14 @@ export function buildWorld(scene, world) {
   for (const o of world.obs) {
     if (o.k === 'torch') { addFlame(scene, out, o.x, 2.55, o.z, 0xff9a3a, 1.1); }
     if (o.k === 'lamp') out.lights.push({ x: o.x, y: 2.8, z: o.z, color: 0xffc070, power: 0.8 });
-    if (o.k === 'brazier') addFlame(scene, out, o.x, 1.5, o.z, 0x6aff7a, 1.6, 'green');
+    if (o.k === 'brazier') { if (o.tint === 'void') addFlame(scene, out, o.x, 1.5, o.z, 0xb06aff, 1.7, 'void'); else addFlame(scene, out, o.x, 1.5, o.z, 0x6aff7a, 1.6, 'green'); }
     if (o.k === 'campfire') { addCampfire(scene, out, o.x, o.z); }
+    if (o.k === 'waystone') {
+      const gl = glowSprite(0x7ad8ff, 2.2, 0.75); gl.position.set(o.x, 2.4, o.z); scene.add(gl);
+      out.flames.push({ s: gl, core: glowSprite(0xffffff, 0.1, 0), base: 1.3, seed: Math.random() * 10 });
+      out.lights.push({ x: o.x, y: 2.6, z: o.z, color: 0x7ad8ff, power: 0.7 });
+      out.emitters.push({ x: o.x, y: 1.2, z: o.z, kind: 'waystone' });
+    }
   }
   // town buildings
   for (const o of world.obs) {
@@ -240,7 +286,11 @@ export function buildWorld(scene, world) {
   {
     const ring = new THREE.Mesh(new THREE.RingGeometry(6, 6.4, 48), new THREE.MeshBasicMaterial({ color: 0x5aff8a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2; ring.position.set(BOSS_ARENA.x - 3, 0.04, BOSS_ARENA.z); scene.add(ring);
-    out.bossRing = ring;
+    const ring2 = new THREE.Mesh(new THREE.RingGeometry(7, 7.5, 6), new THREE.MeshBasicMaterial({ color: 0xb06aff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring2.rotation.x = -Math.PI / 2; ring2.position.set(BOSS_ARENA2.x - 3, 0.04, BOSS_ARENA2.z); scene.add(ring2);
+    const ring3 = new THREE.Mesh(new THREE.RingGeometry(4.2, 4.5, 6), ring2.material);
+    ring3.rotation.x = -Math.PI / 2; ring3.rotation.z = Math.PI / 6; ring3.position.copy(ring2.position); ring3.position.y = 0.045; scene.add(ring3);
+    out.bossRing = ring; out.bossRing2 = ring2; out.bossRing3 = ring3;
   }
   return out;
 }
@@ -249,7 +299,7 @@ function addFlame(scene, out, x, y, z, color, size, kind = 'fire') {
   const core = glowSprite(0xfff0c0, size * 0.6, 0.9); core.position.set(x, y - 0.05, z); scene.add(core);
   out.flames.push({ s, core, base: size, seed: Math.random() * 10 });
   out.lights.push({ x, y, z, color, power: 1 });
-  out.emitters.push({ x, y, z, kind: kind === 'green' ? 'greenfire' : 'ember' });
+  out.emitters.push({ x, y, z, kind: kind === 'green' ? 'greenfire' : kind === 'void' ? 'voidfire' : 'ember' });
 }
 function addCampfire(scene, out, x, z) {
   const g = new THREE.Group();
@@ -262,7 +312,8 @@ function addCampfire(scene, out, x, z) {
 function building(o, out) {
   const g = new THREE.Group();
   const w = o.hw * 2, d = o.hd * 2, h = o.k === 'hall' || o.k === 'inn' ? 3.6 : 3.0;
-  const wallC = o.k === 'forge' ? '#7a6e62' : '#a8927a', roofC = o.k === 'hall' ? '#9a3f30' : o.k === 'inn' ? '#4f6a8a' : o.k === 'forge' ? '#5e5a58' : '#8a5a34';
+  const TR = { frosthaven: ['#8a8f98', '#e8eef4'], cinderwatch: ['#5a4a42', '#3a3234'], mirebrook: ['#8a7a5a', '#7a6a3a'] }[o.town];
+  const wallC = TR ? TR[0] : o.k === 'forge' ? '#7a6e62' : '#a8927a', roofC = TR ? TR[1] : o.k === 'hall' ? '#9a3f30' : o.k === 'inn' ? '#4f6a8a' : o.k === 'forge' ? '#5e5a58' : '#8a5a34';
   const walls = mesh(new THREE.BoxGeometry(w, h, d), M(wallC), 0, h / 2, 0); walls.castShadow = true; walls.receiveShadow = true;
   const beams = mesh(new THREE.BoxGeometry(w + 0.1, 0.25, d + 0.1), M('#3a2a1c'), 0, h - 0.1, 0);
   const base = mesh(new THREE.BoxGeometry(w + 0.3, 0.4, d + 0.3), M('#5a544c'), 0, 0.2, 0);
@@ -274,7 +325,8 @@ function building(o, out) {
   const face = new THREE.Group();
   face.add(mesh(new THREE.BoxGeometry(1.1, 1.9, 0.12), M('#2a1a10'), 0, 0.95, 0));
   for (const sx of [-1, 1]) face.add(mesh(new THREE.BoxGeometry(0.75, 0.7, 0.1), M('#ffb760', { e: '#ff9a30', ei: 1.4 }), sx * (w / 2 - 1.0 > 1.2 ? w / 2 - 1.0 : 1.3), 1.8, 0));
-  const toCenterX = -Math.sign(o.x), toCenterZ = -Math.sign(o.z);
+  const tc = TOWN_BY_ID[o.town] || { x: 0, z: 0 };
+  const toCenterX = -Math.sign(o.x - tc.x), toCenterZ = -Math.sign(o.z - tc.z);
   // pick the side facing the plaza along z (buildings sit at the corners)
   face.position.set(0, 0, toCenterZ * (d / 2 + 0.05));
   if (toCenterZ < 0) face.rotation.y = Math.PI;
@@ -414,7 +466,16 @@ export const CLASS_LOOK = {
   ranger: { skin: '#cf9e78', torso: '#3d5a32', arms: '#5a4430', legs: '#4a3a2a', boots: '#3a2a1a', belt: '#2a1c12', hat: 'hood', hatC: '#2f4a28', weapon: 'bow', cape: '#2f4a28' },
 };
 export function makePlayerModel(cls) { return biped(CLASS_LOOK[cls]); }
-export function makeNpcModel(kind) {
+const NPC_LOOK = {
+  frost: { elder: { skin: '#e0b898', torso: '#5a6a7a', arms: '#8a96a4', legs: '#3a4450', boots: '#2a2420', pauldrons: '#c8d0da', hat: 'helm', plume: '#3a6a9a', weapon: 'sword', shield: '#3a5a7a', cape: '#e8eef4' },
+    smith: { skin: '#d8a882', torso: '#8a7a64', arms: '#d8a882', legs: '#4a3a2a', boots: '#2a2018', apron: '#e8e0d0', bulk: true, hat: 'hood', hatC: '#c8c0b0', beard: '#c8a070', weapon: 'axe' } },
+  ember: { elder: { skin: '#c88a64', torso: '#3a2e2a', arms: '#c88a64', legs: '#2a2420', boots: '#1a1410', apron: '#5a2a1a', bulk: true, hat: 'bald', beard: '#5a2a14', weapon: 'hammer' },
+    smith: { skin: '#d8b090', torso: '#7a2a1a', arms: '#7a2a1a', legs: '#5a1e14', robe: true, belt: '#e8a030', hat: 'wizard', hatC: '#5a1e14', weapon: 'staff', orb: '#ffb040', cape: '#3a140c' } },
+  mire: { elder: { skin: '#c8a888', torso: '#4a5a3e', arms: '#4a5a3e', legs: '#3a4430', robe: true, belt: '#6a4a2a', hat: 'hood', hatC: '#3a4a2e', beard: '#d8d8c8', weapon: 'lantern', cape: '#2a3420' },
+    smith: { skin: '#e8c8a8', torso: '#3a4a6a', arms: '#3a4a6a', legs: '#2a3450', robe: true, belt: '#c8b0ff', hat: 'hood', hatC: '#4a3a6a', weapon: 'staff', orb: '#d8b0ff', cape: '#2a2440' } },
+};
+export function makeNpcModel(kind, look) {
+  if (look && NPC_LOOK[look]) return biped(NPC_LOOK[look][kind]);
   if (kind === 'elder') return biped({ skin: '#d8b090', torso: '#4a5068', arms: '#4a5068', legs: '#3a3f55', robe: true, belt: '#8a6a3a', hat: 'hood', hatC: '#3a3f55', beard: '#e8e2d6', weapon: 'lantern', cape: '#2a2f45' });
   return biped({ skin: '#c99a76', torso: '#6a5444', arms: '#c99a76', legs: '#3a2f28', boots: '#1f1812', apron: '#4a3020', bulk: true, hat: 'bald', beard: '#7a4a24', weapon: 'hammer' });
 }
@@ -440,22 +501,25 @@ function quad(o) {
     if (o.boar) { const t = mesh(new THREE.ConeGeometry(0.04, 0.25, 4), mk('#efe6d0'), s * 0.15, -0.08, 0.45); t.rotation.x = -1.1; head.add(t); }
     else { const e = mesh(new THREE.ConeGeometry(0.07, 0.2, 4), bm, s * 0.11, 0.24, -0.05); head.add(e); }
   }
+  if (o.mane) for (let i = 0; i < 4; i++) { const c = mesh(new THREE.ConeGeometry(0.09, 0.32, 4), mk(o.mane, o.maneGlow ? { e: o.mane, ei: 1.4 } : undefined), 0, 1.15, 0.45 - i * 0.22); c.rotation.x = -0.5; body.add(c); }
   const lh = o.boar ? 0.5 : 0.62;
   for (const [x, z, ph] of [[-0.18, 0.4, 0], [0.18, 0.4, Math.PI], [-0.18, -0.42, Math.PI], [0.18, -0.42, 0]]) {
     const p = new THREE.Group(); p.position.set(x, lh, z); p.userData.ph = ph;
     p.add(mesh(new THREE.BoxGeometry(0.13, lh, 0.15), bm, 0, -lh / 2, 0));
     body.add(p); legs.push(p);
   }
-  return { root, body, legs, arms: [], head, mats, h: 1.5, kind: 'quad' };
+  root.scale.setScalar(o.scale || 1);
+  return { root, body, legs, arms: [], head, mats, h: 1.5 * (o.scale || 1), kind: 'quad' };
 }
-function spider() {
+function spider(o = {}) {
   const mats = []; const mk = (c, opts) => { const m = M(c, opts); mats.push(m); return m; };
   const root = new THREE.Group(); const body = new THREE.Group(); root.add(body);
-  const bm = mk('#2e2232');
+  const bm = mk(o.color || '#2e2232');
   body.add(mesh(new THREE.IcosahedronGeometry(0.34, 1), bm, 0, 0.6, 0.25));
-  const ab = mesh(new THREE.IcosahedronGeometry(0.6, 1), mk('#3a2440'), 0, 0.8, -0.5); ab.scale.set(1, 0.85, 1.15); body.add(ab);
-  body.add(mesh(new THREE.BoxGeometry(0.3, 0.05, 0.4), mk('#8a2a3a'), 0, 1.25, -0.5));
-  const eyes = mk('#000', { e: '#ff2a2a', ei: 2.5 });
+  const ab = mesh(new THREE.IcosahedronGeometry(0.6, 1), mk(o.belly || '#3a2440'), 0, 0.8, -0.5); ab.scale.set(1, 0.85, 1.15); body.add(ab);
+  body.add(mesh(new THREE.BoxGeometry(0.3, 0.05, 0.4), mk(o.mark || '#8a2a3a', o.markGlow ? { e: o.mark, ei: 1.2 } : undefined), 0, 1.25, -0.5));
+  if (o.spikes) for (let i = 0; i < 5; i++) { const c = mesh(new THREE.ConeGeometry(0.06, 0.35, 4), mk(o.spikes), (i - 2) * 0.16, 1.2, -0.45 - Math.abs(i - 2) * 0.08); body.add(c); }
+  const eyes = mk('#000', { e: o.eyes || '#ff2a2a', ei: 2.5 });
   for (let i = 0; i < 4; i++) body.add(mesh(new THREE.BoxGeometry(0.05, 0.05, 0.03), eyes, -0.09 + (i % 2) * 0.18, 0.66 + Math.floor(i / 2) * 0.07, 0.57));
   const legs = [];
   for (let i = 0; i < 8; i++) {
@@ -466,13 +530,26 @@ function spider() {
     p.rotation.y = s * (k - 1.5) * 0.35;
     body.add(p); legs.push(p);
   }
-  return { root, body, legs, arms: [], head: null, mats, h: 1.4, kind: 'spider' };
+  root.scale.setScalar(o.scale || 1);
+  return { root, body, legs, arms: [], head: null, mats, h: 1.4 * (o.scale || 1), kind: 'spider' };
 }
 export function makeMonsterModel(type) {
   switch (type) {
     case 'wolf': return quad({ color: '#5d616e', snout: '#4a4d58' });
     case 'boar': return quad({ color: '#6e4630', snout: '#c08a7a', boar: true, eyes: '#ff5533' });
     case 'spider': return spider();
+    case 'frostwolf': return quad({ color: '#c8d4e0', snout: '#a8b4c4', eyes: '#7ae0ff', mane: '#eef6ff', scale: 1.1 });
+    case 'hound': return quad({ color: '#2a2422', snout: '#3a302a', eyes: '#ff7a1a', mane: '#ff5a10', maneGlow: true, scale: 1.12 });
+    case 'lurker': return spider({ color: '#3a4a2a', belly: '#4a5a2e', mark: '#6a8a3a', eyes: '#d8ff4a', scale: 0.95 });
+    case 'horror': return spider({ color: '#2a2a34', belly: '#3a3448', mark: '#4a6a5a', eyes: '#6affc8', spikes: '#c8c0a8', scale: 1.35 });
+    case 'yeti': return biped({ skin: '#dfe6ee', torso: '#e8eef4', arms: '#e8eef4', legs: '#d0d8e2', boots: '#9aa4b0', bulk: true, longArms: true, hunch: 0.35, eyes: '#5ad0ff', scale: 1.55 });
+    case 'wraith': return biped({ skin: '#bfe0ff', torso: '#8ab0d8', arms: '#a8c8e8', legs: '#6a90b8', robe: true, thin: true, hat: 'hood', hatC: '#5a7aa0', weapon: 'staff', orb: '#9ae8ff', eyes: '#c8f4ff', cape: '#4a6a90' });
+    case 'imp': return biped({ skin: '#c8401a', torso: '#7a1e10', arms: '#c8401a', legs: '#5a1a10', ears: true, weapon: 'staff', orb: '#ffa020', scale: 0.7, headScale: 1.35, eyes: '#ffe040', hunch: 0.25 });
+    case 'brute': return biped({ skin: '#3a2a26', torso: '#2a201e', arms: '#3a2a26', legs: '#2a201e', boots: '#1a1412', bulk: true, pauldrons: '#ff5a10', weapon: 'hammer', eyes: '#ff8a20', hunch: 0.25, scale: 1.5 });
+    case 'drowned': return biped({ skin: '#6a8a80', torso: '#3a4a52', arms: '#6a8a80', legs: '#2e3a40', belt: '#5a4a2a', hat: 'hood', hatC: '#2a3a3a', longArms: true, hunch: 0.35, eyes: '#7affd8', weapon: 'dagger', blade: '#6a7a70' });
+    case 'voidknight': return biped({ skin: '#2a2236', torso: '#2e2840', arms: '#3a3250', legs: '#241e30', pauldrons: '#6a4ab8', hat: 'helm', plume: '#b06aff', weapon: 'greatsword', blade: '#8a6ae0', bladeGlow: '#4a2a8a', shield: undefined, eyes: '#c08aff', cape: '#3a1a5a', scale: 1.3 });
+    case 'shade': return biped({ skin: '#3a2a50', torso: '#2a1e3a', arms: '#3a2a50', legs: '#1e1430', robe: true, thin: true, hat: 'hood', hatC: '#1e1430', weapon: 'staff', orb: '#c08aff', eyes: '#e0b0ff', cape: '#2a1440' });
+    case 'boss2': return biped({ skin: '#a890d8', torso: '#2a1e44', arms: '#3a2a5a', legs: '#1e1430', robe: true, pauldrons: '#8a5ad8', hat: 'crown', weapon: 'greatsword', blade: '#c0a0ff', bladeGlow: '#6a3ac8', eyes: '#f0c8ff', cape: '#4a1a6a', scale: 2.5 });
     case 'goblin': return biped({ skin: '#5f8f34', torso: '#5a4a32', arms: '#5f8f34', legs: '#4a3a24', ears: true, weapon: 'dagger', scale: 0.72, headScale: 1.3, eyes: '#ffdd33', hunch: 0.2 });
     case 'shaman': return biped({ skin: '#6f9a3a', torso: '#7a2a22', arms: '#6f9a3a', legs: '#4a2a1a', ears: true, weapon: 'staff', orb: '#ff6a2a', scale: 0.75, headScale: 1.3, eyes: '#ff8833', robe: true, hunch: 0.2 });
     case 'skeleton': return biped({ skin: '#ddd6c2', torso: '#c9c2ae', arms: '#ddd6c2', legs: '#ddd6c2', boots: '#bdb6a2', thin: true, weapon: 'sword', blade: '#8a8478', shield: '#4a3a2a', eyes: '#66ccff' });

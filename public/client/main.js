@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import {
   Game, World, CLASSES, CLASS_LIST, MONSTERS, MONSTER_LIST, ZONES, zoneAt, zoneLevel, QUESTS, QUEST_BY_ID, questState, npcMarker,
   NPCS, SLOTS, SLOT_NAMES, RARITY, RARITY_COLORS, AFFIX, computeStats, xpNeed, PLAYER_R, TOWN_R, BOSS_ARENA, MAX_LEVEL, POTION_COST,
-  gambleCost, INV_SIZE, TICK, WORLD_R, ROADS, roadWiggle,
+  gambleCost, INV_SIZE, TICK, WORLD_R, ROADS, roadWiggle, TOWNS, TOWN_BY_ID, isSafe, SHOPS, SHOP_INFO, NPC_BY_ID,
+  BOSS_ARENA2, INV_MAX, STASH_MAX, INNER_R,
 } from '../sim.js';
 import { sfx, initAudio, setSound, setMusic } from './audio.js';
 import { paintAbility, drawItemInto } from './icons.js';
@@ -70,7 +71,7 @@ const selfRing = groundRing(0xffd27a, 0.25); selfRing.position.y = 0.04; scene.a
 // ================================================================ state
 const S = {
   mode: 'login', id: null, cls: 'warrior', name: '', token: null,
-  inv: null, hp: 1, mhp: 1, res: 0, mres: 1, cds: [0, 0, 0, 0, 0, 0], buffs: [0, 0],
+  inv: null, hp: 1, mhp: 1, res: 0, mres: 1, cds: [0, 0, 0, 0, 0, 0], buffs: [0, 0, 0, 0],
   me: { x: 0, z: 4, rot: Math.PI, dead: false, dash: null, moving: false },
   players: new Map(), monsters: new Map(), loot: new Map(), roster: new Map(), npcs: [],
   path: null, attackTarget: null, npcTarget: null, lootTarget: null, holdMove: false,
@@ -196,7 +197,7 @@ function addMonsterEnt(a) {
     const r = groundRing(0x5a8aff, 0.6); r.scale.setScalar(def.r * 1.6); r.position.y = 0.05; rig.root.add(r);
     const gl = glowSprite(0x4a7aff, 2.4, 0.35); gl.position.y = 1; rig.root.add(gl);
   }
-  if (def.boss) { const r = groundRing(0x5aff8a, 0.5); r.scale.setScalar(2.4); r.position.y = 0.05; rig.root.add(r); e.boss = true; }
+  if (def.boss) { const r = groundRing(type === 'boss2' ? 0xb06aff : 0x5aff8a, 0.5); r.scale.setScalar(2.4); r.position.y = 0.05; rig.root.add(r); e.boss = true; }
   e.blob = blob(def.r * 2.2); rig.root.add(e.blob);
   rig.root.position.set(e.x, 0, e.z); rig.root.rotation.y = e.rot;
   scene.add(rig.root);
@@ -209,9 +210,10 @@ function addMonsterEnt(a) {
 }
 function removeMonsterEnt(e) { scene.remove(e.rig.root); e.label.remove(); S.monsters.delete(e.id); if (S.attackTarget === e.id) S.attackTarget = null; }
 // NPCs
+const npcHome = (n) => { const t = TOWN_BY_ID[n.town] || TOWNS[0]; return Math.atan2(t.x - n.x, t.z + 2 - n.z); };
 for (const n of NPCS) {
-  const rig = makeNpcModel(n.kind);
-  rig.root.position.set(n.x, 0, n.z); rig.root.rotation.y = Math.atan2(-n.x, -n.z + 2);
+  const rig = makeNpcModel(n.kind, n.look);
+  rig.root.position.set(n.x, 0, n.z); rig.root.rotation.y = npcHome(n);
   rig.root.add(blob(1.4));
   scene.add(rig.root);
   const label = makeLabel('npc'); label.innerHTML = `${esc(n.name)}<span class="t">${esc(n.title)}</span>`;
@@ -219,6 +221,13 @@ for (const n of NPCS) {
   for (const m of rig.mats) m.userData.e0 = m.emissive.clone();
   S.npcs.push({ ...n, rig, label, marker: mk, walk: 0, atk: 0, rot: rig.root.rotation.y, seed: Math.random() * 6 });
 }
+// chests and waystones you can click
+S.objs = world.obs.filter((o) => o.k === 'chest' || o.k === 'waystone').map((o) => {
+  const label = makeLabel('obj'); label.textContent = o.k === 'chest' ? 'Chest' : 'Waystone';
+  label.onpointerdown = (ev) => { ev.stopPropagation(); if (ev.button === 0) goToObj(obj); };
+  const obj = { k: o.k, x: o.x, z: o.z, town: o.town, label };
+  return obj;
+});
 const markerTex = {};
 function markerTexture(kind) {
   if (markerTex[kind]) return markerTex[kind];
@@ -234,8 +243,8 @@ function markerTexture(kind) {
 function updateNpcMarkers() {
   for (const n of S.npcs) {
     let k = null;
-    if (n.id === 'maren') k = S.inv ? npcMarker(S.inv.q, S.inv.lvl) : null;
-    if (n.id === 'borin') k = 'trade';
+    if (n.role === 'quest') k = S.inv ? npcMarker(S.inv.q, S.inv.lvl, n.id) : null;
+    if (n.role === 'shop') k = 'trade';
     n.marker.visible = !!k;
     if (k) { n.marker.material.map = markerTexture(k); n.marker.material.needsUpdate = true; }
   }
@@ -301,7 +310,7 @@ function onMessage(m) {
     case 'potup': ftext.add(S.me.x, 2.6, S.me.z, '+1 potion', 'heal', { dur: 1.2 }); sfx.pickup(); return;
     case 'xp': { const e = S.monsters.get(m.i); if (e) ftext.add(e.x, 2.2, e.z, `+${m.v} XP`, 'xp', { dur: 1.3, rise: 1.2 }); return; }
     case 'qa': { const q = QUEST_BY_ID[m.q]; toast(`Quest accepted: ${q.name}`); sfx.quest(); return; }
-    case 'qp': { const q = QUEST_BY_ID[m.q]; const done = m.n >= q.goal.n; toast(`${goalText(q)}: ${m.n}/${q.goal.n}`, done ? 'good' : ''); if (done) { sfx.quest(); addChat(null, `${q.name} is ready to turn in. Return to Elder Maren.`, 'sys'); } return; }
+    case 'qp': { const q = QUEST_BY_ID[m.q]; const done = m.n >= q.goal.n; toast(`${goalText(q)}: ${m.n}/${q.goal.n}`, done ? 'good' : ''); if (done) { sfx.quest(); addChat(null, `${q.name} is ready to turn in. Return to ${giverName(q)}.`, 'sys'); } return; }
     case 'qd': { const q = QUEST_BY_ID[m.q]; toast(`Quest complete: ${q.name}`, 'big'); sfx.questDone(); addChat(null, `Quest complete: ${q.name}. +${m.xp} XP, +${m.g} gold.`, 'sys'); return; }
     case 'lvl': {
       const ab = m.ab ? CLASSES[S.cls].ab.find((a) => a.id === m.ab) : null;
@@ -312,11 +321,14 @@ function onMessage(m) {
     }
     case 'dead': {
       S.me.dead = true; S.deathT = 5; S.path = null; S.attackTarget = null;
-      $('death').hidden = false; $('deathby').textContent = `Slain by ${m.by}.${m.lost ? ` You dropped ${m.lost} gold.` : ''} You will rise at the fountain…`;
+      $('death').hidden = false; $('deathby').textContent = `Slain by ${m.by}.${m.lost ? ` You dropped ${m.lost} gold.` : ''} You will rise in ${TOWN_BY_ID[S.inv?.home]?.name || 'town'}…`;
       sfx.pdie();
       return;
     }
+    case 'shop': m._at = performance.now(); S.shop = m; if (!$('shopwin').hidden && S.shopNpc === m.n) renderShop(); return;
+    case 'wp': { const t = TOWN_BY_ID[m.town]; banner('Waystone found', `YOU CAN NOW TRAVEL TO ${t.name.toUpperCase()}`); sfx.quest(); addChat(null, `You found the waystone of ${t.name}. You will now rise here when you fall, and you can travel here from any waystone.`, 'sys'); return; }
     case 'setpos': {
+      if (m.travel) { S.cam.x = m.x; S.cam.z = m.z; closeAll(); sfx.blink(); }
       S.me.x = m.x; S.me.z = m.z; S.me.dash = null; S.path = null;
       if (m.respawn) { S.me.dead = false; $('death').hidden = true; S.cam.x = m.x; S.cam.z = m.z; }
       S.sentX = m.x; S.sentZ = m.z;
@@ -359,7 +371,7 @@ function onSnap(s) {
   const me = s.me;
   S.hp = me[0]; S.mhp = me[1]; S.res = me[2]; S.mres = me[3];
   for (let i = 0; i < 6; i++) S.cds[i] = me[4][i];
-  S.buffs[0] = me[5]; S.buffs[1] = me[6];
+  S.buffs[0] = me[5]; S.buffs[1] = me[6]; S.buffs[2] = me[7] || 0; S.buffs[3] = me[8] || 0;
   for (const ev of s.e) onEvent(ev);
   renderParty(false);
   updateOrbs();
@@ -393,7 +405,7 @@ function onEvent(e) {
       const m = S.monsters.get(e.i); if (!m) return;
       m.dying = 0.0001; m.label.style.display = 'none';
       parts.emit(e.x, 0.8, e.z, { n: 18, color: 0x3a2a3a, color2: 0x8a6a5a, speed: 3, life: [0.4, 0.9], size: [0.3, 0.6], grav: 2, drag: 0.94 });
-      if (m.boss) { shake(1); rings.add(e.x, e.z, 1, 14, 1.2, 0x7aff9a); parts.emit(e.x, 2, e.z, { n: 160, color: 0x6aff8a, color2: 0xe8ffe0, speed: 9, life: [0.8, 2], size: [0.3, 0.7], drag: 0.95, vy: 3 }); }
+      if (m.boss) { const c2 = m.type === 'boss2'; shake(1); rings.add(e.x, e.z, 1, 14, 1.2, c2 ? 0xc08aff : 0x7aff9a); parts.emit(e.x, 2, e.z, { n: 160, color: c2 ? 0xa06aff : 0x6aff8a, color2: c2 ? 0xf0e0ff : 0xe8ffe0, speed: 9, life: [0.8, 2], size: [0.3, 0.7], drag: 0.95, vy: 3 }); }
       if (near(e.x, e.z) < 30) sfx.die();
       if (S.attackTarget === e.i) S.attackTarget = null;
       return;
@@ -409,12 +421,12 @@ function onEvent(e) {
     case 'matk': {
       const m = S.monsters.get(e.i); if (!m) return;
       m.atk = m.atkDur = e.big ? 1.2 : 0.4;
-      if (m.boss && e.big) ftext.add(m.x, 5.5, m.z, 'Grave Slam!', 'info', { dur: 1.4 });
+      if (m.boss && e.big) ftext.add(m.x, 5.5, m.z, m.type === 'boss2' ? 'Shard Storm!' : 'Grave Slam!', 'info', { dur: 1.4 });
       return;
     }
     case 'ps': projs.spawn(e); if (e.t === 1) { /* player shot */ } return;
     case 'pe': projs.end(e, (kind, x, z) => {
-      const c = { bolt: 0xb08aff, fireball: 0xff8a20, arrow: 0xe8d8b0, fire: 0xff6a20, arrow_m: 0x9affa0 }[kind] || 0xffffff;
+      const c = { bolt: 0xb08aff, fireball: 0xff8a20, arrow: 0xe8d8b0, fire: 0xff6a20, arrow_m: 0x9affa0, frost: 0x9ae8ff, void: 0xc08aff }[kind] || 0xffffff;
       parts.emit(x, 1.2, z, { n: 8, color: c, speed: 3.5, life: [0.15, 0.35], size: [0.15, 0.3] });
     }); return;
     case 'tg': {
@@ -443,6 +455,7 @@ function onFx(e, v) {
     case 'slam': shake(0.8); rings.add(e.x, e.z, 0.5, e.r + 0.5, 0.5, 0xff3020); parts.emit(e.x, 0.3, e.z, { n: 60, color: 0x6a5040, color2: 0xb0a080, speed: 9, ring: true, life: [0.3, 0.7], size: [0.4, 0.8], drag: 0.9, vy: 2 }); sfx.stomp(); return;
     case 'spikes': parts.emit(e.x, 0.2, e.z, { n: 40, color: 0xe8e0d0, color2: 0x9aff9a, speed: 2, radius: e.r * 0.8, life: [0.3, 0.6], size: [0.25, 0.4], vy: 9, grav: 20 }); sfx.hit(v); return;
     case 'summon': rings.add(e.x, e.z, 1, 7, 1.0, 0x6aff8a); parts.emit(e.x, 0.5, e.z, { n: 60, color: 0x3aff6a, color2: 0xc0ffd0, speed: 5, ring: true, life: [0.6, 1.0], size: [0.3, 0.5], vy: 3 }); sfx.bossWake(); return;
+    case 'travel': rings.add(e.x, e.z, 0.4, 3.5, 0.7, 0x7ad8ff); parts.emit(e.x, 0.4, e.z, { n: 50, color: 0x7ad8ff, color2: 0xffffff, speed: 0.8, radius: 0.9, life: [0.6, 1.2], size: [0.2, 0.4], vy: 6 }); return;
     case 'respawn': parts.emit(e.x, 0.3, e.z, { n: 50, color: 0x9ad0ff, color2: 0xffffff, speed: 0.8, radius: 0.8, life: [0.8, 1.4], size: [0.25, 0.4], vy: 5 }); return;
   }
 }
@@ -477,7 +490,7 @@ function playCastVisual(p, slot, ang, v = 1) {
 }
 
 // ================================================================ pathfinding
-const GN = 300, GO = 150;
+const GN = 480, GO = 240;
 let walk = null;
 function buildPathGrid() {
   if (walk) return;
@@ -512,7 +525,7 @@ function findPath(x1, z1, x2, z2) {
   const h = (n) => { const dx = Math.abs((n % GN) - gi), dz = Math.abs(Math.floor(n / GN) - gj); return Math.max(dx, dz) + 0.414 * Math.min(dx, dz); };
   g.set(start, 0); push(h(start), start);
   let found = false, iter = 0;
-  while (heap.length && iter++ < 25000) {
+  while (heap.length && iter++ < 60000) {
     const [, n] = pop();
     if (n === goal) { found = true; break; }
     if (closed.has(n)) continue; closed.add(n);
@@ -562,11 +575,13 @@ function pickHover() {
     if (d < rad && d < bd) { bd = d; best = e; }
   }
   S.hoverMon = best;
-  S.hoverNpc = null;
-  if (!best) for (const n of S.npcs) { const s = project(n.x, 1.2, n.z); if (s && Math.hypot(s.x - mx, (s.y - my) * 0.7) < 42) S.hoverNpc = n; }
-  canvas.style.cursor = best ? 'crosshair' : S.hoverNpc ? 'pointer' : 'default';
+  S.hoverNpc = null; S.hoverObj = null;
+  if (!best) for (const n of S.npcs) { if (Math.abs(n.x - S.me.x) > 40 || Math.abs(n.z - S.me.z) > 40) continue; const s = project(n.x, 1.2, n.z); if (s && Math.hypot(s.x - mx, (s.y - my) * 0.7) < 42) S.hoverNpc = n; }
+  if (!best && !S.hoverNpc) for (const o of S.objs) { if (Math.abs(o.x - S.me.x) > 40 || Math.abs(o.z - S.me.z) > 40) continue; const s = project(o.x, o.k === 'chest' ? 0.5 : 1.5, o.z); if (s && Math.hypot(s.x - mx, (s.y - my) * (o.k === 'chest' ? 1 : 0.6)) < 40) S.hoverObj = o; }
+  canvas.style.cursor = best ? 'crosshair' : S.hoverNpc || S.hoverObj ? 'pointer' : 'default';
 }
-function anyWindowOpen() { return ['charwin', 'shopwin', 'questwin', 'logwin', 'helpwin', 'mapwin'].some((id) => !$(id).hidden); }
+const WINS = ['charwin', 'shopwin', 'questwin', 'logwin', 'helpwin', 'mapwin', 'stashwin', 'waywin'];
+function anyWindowOpen() { return WINS.some((id) => !$(id).hidden); }
 canvas.addEventListener('pointermove', (e) => { S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.mouse.shift = e.shiftKey; });
 canvas.addEventListener('pointerdown', (e) => {
   initAudio();
@@ -582,14 +597,21 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.shiftKey) { castSlot(0, S.hoverMon ? { x: S.hoverMon.x, z: S.hoverMon.z } : g); return; }
   if (S.hoverMon) { S.attackTarget = S.hoverMon.id; S.path = null; S.npcTarget = null; S.lootTarget = null; return; }
   if (S.hoverNpc) { goToNpc(S.hoverNpc); return; }
-  S.attackTarget = null; S.npcTarget = null; S.lootTarget = null;
+  if (S.hoverObj) { goToObj(S.hoverObj); return; }
+  S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null;
   S.path = findPath(S.me.x, S.me.z, g.x, g.z);
   rings.add(g.x, g.z, 0.2, 0.9, 0.35, 0xffd27a, 0.06, 0.3);
 });
 window.addEventListener('pointerup', (e) => { if (e.button === 0) { S.mouse.down = false; S.holdMove = false; } });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); S.zoom = Math.min(1.45, Math.max(0.6, S.zoom * (e.deltaY > 0 ? 1.08 : 0.93))); }, { passive: false });
-function goToNpc(n) { S.npcTarget = n.id; S.attackTarget = null; S.lootTarget = null; if (Math.hypot(n.x - S.me.x, n.z - S.me.z) < 4.5) { openNpc(n.id); S.npcTarget = null; S.path = null; } else S.path = findPath(S.me.x, S.me.z, n.x, n.z + 1.6); }
+function goToNpc(n) { S.npcTarget = n.id; S.objTarget = null; S.attackTarget = null; S.lootTarget = null; if (Math.hypot(n.x - S.me.x, n.z - S.me.z) < 4.5) { openNpc(n.id); S.npcTarget = null; S.path = null; } else S.path = findPath(S.me.x, S.me.z, n.x, n.z + 1.6); }
+function goToObj(o) {
+  if (S.me.dead) return;
+  S.objTarget = o; S.npcTarget = null; S.attackTarget = null; S.lootTarget = null;
+  if (Math.hypot(o.x - S.me.x, o.z - S.me.z) < 3.5) { openObj(o); S.objTarget = null; S.path = null; }
+  else S.path = findPath(S.me.x, S.me.z, o.x, o.z + 1.8);
+}
 function goPickUp(id) {
   const l = S.loot.get(id); if (!l || S.me.dead) return;
   S.attackTarget = null; S.npcTarget = null;
@@ -651,7 +673,7 @@ function castSlot(s, at) {
 }
 function drink() {
   if (!S.inv || S.me.dead) return;
-  if (S.inv.pots <= 0) { toast('No potions left. Borin sells them in town.', 'warn'); sfx.error(); return; }
+  if (S.inv.pots <= 0) { toast('No potions left. Every trader in town sells them.', 'warn'); sfx.error(); return; }
   if (S.cds[5] > 0.05) return;
   send({ t: 'pot' }); S.cds[5] = 6;
 }
@@ -678,7 +700,7 @@ function buildHotbar() {
 function nearestMonster(r) { let best = null, bd = r; for (const e of S.monsters.values()) { if (e.dying) continue; const d = Math.hypot(e.x - S.me.x, e.z - S.me.z); if (d < bd) { bd = d; best = e; } } return best; }
 function showAbilityTip(el, s) {
   const d = CLASSES[S.cls];
-  if (s === 5) return showTip(el, `<h4>Healing Potion</h4><div class="desc">Restores 45% of your life. 6 sec cooldown.</div><div class="hint">You have ${S.inv?.pots ?? 0}. Borin sells more for ${POTION_COST} gold.</div>`);
+  if (s === 5) return showTip(el, `<h4>Healing Potion</h4><div class="desc">Restores 45% of your life. 6 sec cooldown.</div><div class="hint">You have ${S.inv?.pots ?? 0}. Every trader sells more for ${POTION_COST} gold.</div>`);
   const ab = s === 0 ? d.basic : d.ab[s - 1];
   const lock = s > 0 && S.inv && S.inv.lvl < ab.lvl;
   showTip(el, `<h4 style="color:${d.color}">${ab.name}</h4>${ab.cost ? `<div class="cost">${ab.cost} ${d.res}</div>` : ab.gain ? `<div class="cost">Generates ${ab.gain} ${d.res}</div>` : ''}<div class="desc">${ab.desc}</div>${ab.cd ? `<div class="hint">${ab.cd} sec cooldown</div>` : ''}${lock ? `<div class="req">Unlocks at level ${ab.lvl}</div>` : ''}`);
@@ -690,6 +712,8 @@ function updateOrbs() {
   $('orb-res').querySelector('.fill').style.height = `${(rF * 100).toFixed(1)}%`;
   $('orb-res').querySelector('.val').textContent = `${S.res} / ${S.mres}`;
   const bf = []; if (S.buffs[0] > 0) bf.push(`<span class="buff" style="color:#ff8a6a">War Cry ${Math.ceil(S.buffs[0])}s</span>`); if (S.buffs[1] > 0) bf.push(`<span class="buff" style="color:#8ae06a">Mend ${Math.ceil(S.buffs[1])}s</span>`);
+  const mmss = (v) => `${Math.floor(v / 60)}:${String(Math.ceil(v) % 60).padStart(2, '0')}`;
+  if (S.buffs[2] > 0) bf.push(`<span class="buff" style="color:#ff7a4a">Fury ${mmss(S.buffs[2])}</span>`); if (S.buffs[3] > 0) bf.push(`<span class="buff" style="color:#b8c0d0">Stone ${mmss(S.buffs[3])}</span>`);
   const html = bf.join(''); if ($('buffs').innerHTML !== html) $('buffs').innerHTML = html;
 }
 function updateHotbar(dt) {
@@ -721,6 +745,8 @@ function onInv(prev) {
   renderTracker();
   if (!$('charwin').hidden) renderChar();
   if (!$('shopwin').hidden) renderShop();
+  if (!$('stashwin').hidden) renderStash();
+  if (!$('waywin').hidden) renderWay();
   if (!$('logwin').hidden) renderLog();
   if (!$('questwin').hidden && questView) renderQuest(questView);
   if (prev && prev.lvl !== iv.lvl) renderParty(true);
@@ -744,7 +770,13 @@ function renderParty(rebuild) {
     el.classList.toggle('dead', !!(p && p.flags & 1));
   }
 }
-function goalText(q) { if (q.goal.champion) return 'Champions slain'; const n = q.goal.kill.map((k) => MONSTERS[k].name); return `${n.length > 1 ? (q.goal.kill.includes('skeleton') ? 'Risen dead' : 'Goblins') : n[0] + 's'} slain`; }
+function goalText(q) {
+  if (q.goal.champion) return 'Champions slain';
+  const k = q.goal.kill;
+  if (k.length > 1) return `${k.includes('skeleton') ? 'Risen dead' : k.includes('voidknight') ? 'Knights and shades' : 'Goblins'} slain`;
+  const d = MONSTERS[k[0]];
+  return d.boss ? `${d.short} slain` : `${d.name.replace(/f$/, 've')}s slain`;
+}
 function renderTracker() {
   const iv = S.inv; if (!iv) return;
   const act = Object.keys(iv.q.a);
@@ -753,11 +785,14 @@ function renderTracker() {
     html += '<div class="hd">QUESTS</div>';
     for (const id of act) {
       const q = QUEST_BY_ID[id]; const n = iv.q.a[id]; const done = n >= q.goal.n;
-      html += `<div class="tq ${done ? 'ready' : ''}"><b>${esc(q.name)}</b><span>${done ? 'Return to Elder Maren' : `${goalText(q)}: ${n}/${q.goal.n}`}</span></div>`;
+      html += `<div class="tq ${done ? 'ready' : ''}"><b>${esc(q.name)}</b><span>${done ? `Return to ${giverName(q)}` : `${goalText(q)}: ${n}/${q.goal.n}`}</span></div>`;
     }
   } else {
-    const mk = npcMarker(iv.q, iv.lvl);
-    if (mk === 'avail' || mk === 'ready') html = '<div class="tq"><b>Elder Maren has work for you</b><span>Find her by the fountain in town</span></div>';
+    for (const n of NPCS) {
+      if (n.role !== 'quest') continue;
+      const mk = npcMarker(iv.q, iv.lvl, n.id);
+      if (mk === 'avail' || mk === 'ready') { html = `<div class="tq"><b>${esc(n.name)} has work for you</b><span>${n.id === 'maren' ? 'Find her by the fountain in town' : `In ${TOWN_BY_ID[n.town].name}${iv.wp.includes(n.town) ? '' : ` · ${{ frosthaven: 'north', cinderwatch: 'east', mirebrook: 'south' }[n.town]}, past the ridge`}`}</span></div>`; break; }
+    }
   }
   $('tracker').innerHTML = html;
 }
@@ -771,7 +806,7 @@ function openWin(id) {
   if (id === 'helpwin') renderHelp();
   if (id === 'mapwin') drawBigMap();
 }
-function closeAll() { for (const id of ['charwin', 'shopwin', 'questwin', 'logwin', 'helpwin', 'mapwin']) $(id).hidden = true; hideTip(); }
+function closeAll() { for (const id of WINS) $(id).hidden = true; hideTip(); }
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => { $(b.dataset.close).hidden = true; hideTip(); sfx.click(); }));
 $('b-char').onclick = () => toggle('charwin'); $('b-log').onclick = () => toggle('logwin'); $('b-map').onclick = () => toggle('mapwin'); $('b-help').onclick = () => toggle('helpwin');
 $('mmwrap').onclick = () => toggle('mapwin');
@@ -814,16 +849,17 @@ function renderChar() {
     bags.appendChild(b);
   });
   $('goldv').textContent = iv.gold;
-  $('baghint').textContent = shop ? 'Click an item to sell it' : 'Click: equip · Shift+click: discard';
+  $('baghint').textContent = !$('stashwin').hidden ? 'Click an item to put it in the chest' : shop ? 'Click an item to sell it' : 'Click: equip · Shift+click: discard';
 }
 function onBagClick(i, it, ev) {
   hideTip();
+  if (!$('stashwin').hidden && !ev.shiftKey) { send({ t: 'stash', a: 'put', i }); sfx.click(); return; }
   if (!$('shopwin').hidden && !ev.shiftKey) { send({ t: 'sell', i }); return; }
   if (ev.shiftKey) {
     if (it.r >= 3 && (!S.discardArm || S.discardArm.id !== it.id || performance.now() - S.discardArm.t > 2500)) { S.discardArm = { id: it.id, t: performance.now() }; toast(`Shift+click ${it.name} again to discard it.`, 'warn'); return; }
     send({ t: 'discard', i }); return;
   }
-  if (it.slot === 'weapon' && it.cls !== S.cls) { toast(`Only a ${CLASSES[it.cls].name} can use that. Sell it to Borin.`, 'warn'); sfx.error(); return; }
+  if (it.slot === 'weapon' && it.cls !== S.cls) { toast(`Only a ${CLASSES[it.cls].name} can use that. Sell it to a trader, or keep it in your chest for another hero.`, 'warn'); sfx.error(); return; }
   send({ t: 'equip', i }); sfx.click();
 }
 function statsWith(slot, it) {
@@ -842,7 +878,7 @@ function itemLines(it) {
   for (const k in it.aff) s += `<div class="aff">${AFFIX[k].fmt(it.aff[k])}</div>`;
   return s;
 }
-function showItemTip(el, it, equipped) {
+function showItemTip(el, it, equipped, mode) {
   const col = RARITY_COLORS[it.r];
   let html = `<h4 style="color:${col}">${esc(it.name)}</h4><div class="base">${RARITY[it.r]} ${esc(it.base)} · ${SLOT_NAMES[it.slot]} · item level ${it.il}</div>${itemLines(it)}`;
   if (it.slot === 'weapon' && it.cls !== S.cls) html += `<div class="req">${CLASSES[it.cls].name} only</div>`;
@@ -852,8 +888,8 @@ function showItemTip(el, it, equipped) {
     const lines = diff('damage per second', a.dps, b.dps) + diff('life', a.mhp, b.mhp) + diff('armor', a.armor, b.armor) + diff('critical chance', a.crit, b.crit, '%') + diff('movement speed', a.speed, b.speed, '%');
     html += `<div class="cmp">${S.inv.eq[it.slot] ? `Compared with ${esc(S.inv.eq[it.slot].name)}:` : 'You have nothing equipped here:'}${lines || '<div>No change</div>'}</div>`;
   }
-  const shop = !$('shopwin').hidden;
-  html += `<div class="hint">${equipped ? 'Click to take off' : shop ? `Click to sell for ${it.v} gold` : `Click to equip · Shift+click to discard (${Math.max(1, Math.round(it.v * 0.2))} gold)`}</div>`;
+  const shop = !$('shopwin').hidden, stash = !$('stashwin').hidden;
+  html += `<div class="hint">${mode === 'buy' ? 'Buy it with the button on the right' : mode === 'take' ? 'Click to take it out of the chest' : equipped ? 'Click to take off' : stash ? 'Click to put it in your chest' : shop ? `Click to sell for ${it.v} gold` : `Click to equip · Shift+click to discard (${Math.max(1, Math.round(it.v * 0.2))} gold)`}</div>`;
   showTip(el, html);
 }
 function showTip(el, html) {
@@ -866,32 +902,108 @@ function showTip(el, html) {
 function hideTip() { $('tip').hidden = true; }
 
 // NPC windows
+const SAYINGS = {
+  maren: '“Duskhold has stood for three hundred years. It will not fall on my watch. Not while there are still hands willing to hold a blade.”',
+  hilde: '“Nobody climbs to Frosthaven for the view. If you made it over the ridge, you can make yourself useful.”',
+  tamsin: '“Mind the sparks. Everything in Cinderwatch is either on fire, about to be, or just was.”',
+  fenwick: '“Keep to the boardwalks, stranger. The marsh is patient, and it is always hungry.”',
+  borin: '“Sell me your spoils, buy what keeps you breathing. Or try your luck on a sealed crate. I don\'t open them, so I don\'t know what\'s inside either.”',
+  ulfar: '“Furs, packs and steel from the high passes. Bigger bags, too. You look like someone who carries too much.”',
+  varek: '“Elixirs! Fury for the arm, stone for the skin. And chests that hold more than they should. Do not ask me how.”',
+  yselle: '“Curios from the marsh and beyond. My coffers never hold anything ordinary. Some of them hold something legendary.”',
+};
+function giverName(q) { return NPC_BY_ID[q.giver]?.name || 'the quest giver'; }
 function openNpc(id) {
   closeAll();
-  if (id === 'borin') { $('shopwin').hidden = false; renderShop(); openWin('charwin'); }
-  if (id === 'maren') { questView = 'list'; $('questwin').hidden = false; renderQuest('list'); }
+  const n = NPC_BY_ID[id]; if (!n) return;
+  if (n.role === 'shop') {
+    S.shopNpc = id; if (!S.shop || S.shop.n !== id) S.shop = null;
+    send({ t: 'shop', n: id });
+    $('shopwin').hidden = false; renderShop(); openWin('charwin');
+  } else { S.questNpc = id; questView = 'list'; $('questwin').hidden = false; renderQuest('list'); }
   sfx.click();
+}
+function openObj(o) {
+  closeAll(); S.openObj = o; sfx.click();
+  if (o.k === 'chest') { $('stashwin').hidden = false; renderStash(); openWin('charwin'); }
+  else { $('waywin').hidden = false; renderWay(); }
 }
 function renderShop() {
   const iv = S.inv; if (!iv) return;
-  const b = $('buypot'); b.textContent = `Buy · ${POTION_COST} gold`; b.disabled = iv.gold < POTION_COST;
-  b.onclick = () => send({ t: 'buy', w: 'potion' });
-  const g = $('gamble'); g.innerHTML = '';
-  const cost = gambleCost(iv.lvl);
-  for (const s of SLOTS) {
-    const bt = document.createElement('button'); bt.className = 'btn ghost'; bt.innerHTML = `${SLOT_NAMES[s]}<br><span class="gold">${cost}</span>`;
-    bt.disabled = iv.gold < cost; bt.onclick = () => send({ t: 'buy', w: 'gamble', s });
-    g.appendChild(bt);
+  const n = NPC_BY_ID[S.shopNpc] || NPC_BY_ID.borin;
+  const box = $('shopbody');
+  let html = `<h2 class="ptitle">${esc(n.name)}</h2><p class="say">${SAYINGS[n.id] || ''}</p>`;
+  const sh = S.shop && S.shop.n === n.id ? S.shop : null;
+  if (!sh) { box.innerHTML = html + '<p class="say">…</p>'; return; }
+  const items = sh.offers.filter((o) => o.k === 'item');
+  for (const o of sh.offers) {
+    if (o.k === 'item') continue;
+    const info = SHOP_INFO[o.k]; const poor = iv.gold < o.price;
+    if (o.k === 'crate' || o.k === 'mystic') {
+      html += `<div style="padding-top:10px">${info.name} · <span class="gold">${o.price}</span><small>${info.desc}</small></div><div class="gamble">` +
+        SLOTS.map((sl) => `<button class="btn ghost" data-buy="${o.k}" data-slot="${sl}" ${poor ? 'disabled' : ''}>${SLOT_NAMES[sl]}</button>`).join('') + '</div>';
+      continue;
+    }
+    let extra = '';
+    if (o.k === 'potion') extra = ` You have ${iv.pots}.`;
+    if (o.k === 'bag') extra = ` Now ${iv.inv.length} of ${INV_MAX}.`;
+    if (o.k === 'stashup') extra = ` Now ${iv.stash.length} of ${STASH_MAX}.`;
+    const maxed = (o.k === 'bag' && iv.inv.length >= INV_MAX) || (o.k === 'stashup' && iv.stash.length >= STASH_MAX);
+    html += `<div class="row"><div>${info.name}<small>${info.desc}${extra}</small></div><button class="btn" data-buy="${o.k}" ${poor || maxed ? 'disabled' : ''}>${maxed ? 'Maxed' : `<span class="gold">${o.price}</span>`}</button></div>`;
   }
+  if (items.length) {
+    html += `<div class="hd">WARES · NEW STOCK IN ${Math.max(1, Math.ceil((sh.refresh - (performance.now() - (sh._at || performance.now())) / 1000) / 60))} MIN</div>`;
+    items.forEach((o, i) => {
+      html += `<div class="ware"><button class="inv r${o.it.r}" data-tip="${i}"><canvas></canvas></button><div style="color:${RARITY_COLORS[o.it.r]}">${esc(o.it.name)}<small>${SLOT_NAMES[o.it.slot]} · item level ${o.it.il}</small></div><button class="btn" data-item="${esc(o.o)}" ${iv.gold < o.price ? 'disabled' : ''}><span class="gold">${o.price}</span></button></div>`;
+    });
+  }
+  html += '<p class="say" style="font-style:normal;font-size:13px">Click any item in your bags to sell it.</p>';
+  box.innerHTML = html;
+  box.querySelectorAll('[data-buy]').forEach((b) => (b.onclick = () => { sfx.click(); send({ t: 'buy', w: b.dataset.buy, s: b.dataset.slot, n: n.id }); }));
+  box.querySelectorAll('[data-item]').forEach((b) => (b.onclick = () => { sfx.click(); send({ t: 'buy', w: 'item', n: n.id, o: b.dataset.item }); }));
+  box.querySelectorAll('[data-tip]').forEach((b) => {
+    const it = items[+b.dataset.tip].it; drawItemInto(b.querySelector('canvas'), it);
+    b.onmouseenter = () => showItemTip(b, it, false, 'buy'); b.onmouseleave = hideTip;
+  });
+}
+function renderStash() {
+  const iv = S.inv; if (!iv) return;
+  const box = $('stash'); box.innerHTML = '';
+  iv.stash.forEach((it, i) => {
+    const b = document.createElement('button'); b.className = 'inv';
+    if (it) {
+      b.classList.add(`r${it.r}`);
+      const cv = document.createElement('canvas'); drawItemInto(cv, it); b.appendChild(cv);
+      b.setAttribute('aria-label', it.name);
+      b.onclick = () => { hideTip(); sfx.click(); send({ t: 'stash', a: 'take', i }); };
+      b.onmouseenter = () => showItemTip(b, it, false, 'take'); b.onmouseleave = hideTip;
+    } else b.setAttribute('aria-label', 'Empty slot');
+    box.appendChild(b);
+  });
+  $('stashfoot').textContent = `${iv.stash.filter(Boolean).length} of ${iv.stash.length} slots used. Varek in Cinderwatch can make your chest bigger.`;
+}
+function renderWay() {
+  const iv = S.inv; if (!iv) return;
+  const here = S.openObj?.town;
+  let html = '';
+  for (const t of TOWNS) {
+    const known = iv.wp.includes(t.id);
+    const isHere = t.id === here;
+    html += `<button class="way" data-to="${t.id}" ${!known || isHere ? 'disabled' : ''}><span><b>${esc(t.name)}</b><small>${known ? (t.id === 'town' ? 'The old keep' : ZONES[t.id].sub) : `Not found yet · walk there first (level ${t.lvl}+)`}</small></span>${isHere ? '<span class="here">You are here</span>' : known ? '<span class="gold">Travel</span>' : ''}</button>`;
+  }
+  $('waylist').innerHTML = html;
+  $('waylist').querySelectorAll('[data-to]').forEach((b) => (b.onclick = () => send({ t: 'travel', to: b.dataset.to })));
 }
 let questView = null;
 function renderQuest(view) {
   questView = view;
   const iv = S.inv; const box = $('qbody'); if (!iv) return;
   if (view === 'list') {
-    let html = `<h2 class="ptitle">Elder Maren</h2><p class="say">“Duskhold has stood for three hundred years. It will not fall on my watch. Not while there are still hands willing to hold a blade.”</p><div class="qlist">`;
+    const giver = NPC_BY_ID[S.questNpc] || NPC_BY_ID.maren;
+    let html = `<h2 class="ptitle">${esc(giver.name)}</h2><p class="say">${SAYINGS[giver.id] || ''}</p><div class="qlist">`;
     let any = false;
     for (const q of QUESTS) {
+      if (q.giver !== giver.id) continue;
       const s = questState(iv.q, q);
       if (s === 'done' || s === 'locked') continue;
       any = true;
@@ -899,7 +1011,8 @@ function renderQuest(view) {
       const mk = s === 'ready' ? '?' : s === 'active' ? '…' : '!';
       html += `<button class="qitem" data-q="${q.id}"><span class="mk ${low || s === 'active' ? 'grey' : ''} ${s === 'ready' ? 'ready' : ''}">${mk}</span><span><b>${esc(q.name)}</b><div class="meta">${s === 'ready' ? 'Complete: claim your reward' : s === 'active' ? `In progress · ${iv.q.a[q.id]}/${q.goal.n}` : low ? `Requires level ${q.lvl}` : `Level ${q.lvl} · ${ZONES[q.zone]?.name || 'Anywhere'}`}</div></span></button>`;
     }
-    if (!any) html += '<p class="say">“You have done all I could ask. Rest, hero.”</p>';
+    if (!any) html += `<p class="say">“You have done all I could ask. Rest, hero.”</p>`;
+    if (giver.id === 'maren' && iv.lvl >= 10) html += '<p class="say" style="font-style:normal;font-size:13px">Beyond the ridge lie the outer lands. Follow any road out of town past the ridge to find Frosthaven, Cinderwatch and Mirebrook.</p>';
     box.innerHTML = html + '</div>';
     box.querySelectorAll('.qitem').forEach((b) => (b.onclick = () => { sfx.click(); renderQuest(b.dataset.q); }));
     return;
@@ -923,7 +1036,7 @@ function renderLog() {
   if (!act.length) html = '<p class="say">No quests yet. Elder Maren stands by the fountain in town. Look for the gold “!”.</p>';
   for (const id of act) {
     const q = QUEST_BY_ID[id]; const n = iv.q.a[id];
-    html += `<div style="margin-top:14px"><b style="font-size:16px;color:var(--ember-hi)">${esc(q.name)}</b><div style="color:var(--ash);font-size:13px">${q.zone ? ZONES[q.zone].name : 'Anywhere in the realm'} · level ${q.lvl}</div><p class="qtext" style="margin:6px 0;font-size:14px">${esc(q.text)}</p><div class="qgoal">${n >= q.goal.n ? '<span style="color:var(--good)">Complete. Return to Elder Maren.</span>' : `${goalText(q)}: ${n}/${q.goal.n}`}</div><button class="btn ghost" data-ab="${id}" style="font-size:12px;padding:4px 10px;margin-top:4px">Abandon</button></div>`;
+    html += `<div style="margin-top:14px"><b style="font-size:16px;color:var(--ember-hi)">${esc(q.name)}</b><div style="color:var(--ash);font-size:13px">${q.zone ? ZONES[q.zone].name : 'Anywhere in the realm'} · level ${q.lvl}</div><p class="qtext" style="margin:6px 0;font-size:14px">${esc(q.text)}</p><div class="qgoal">${n >= q.goal.n ? `<span style="color:var(--good)">Complete. Return to ${esc(giverName(q))}.</span>` : `${goalText(q)}: ${n}/${q.goal.n}`}</div><button class="btn ghost" data-ab="${id}" style="font-size:12px;padding:4px 10px;margin-top:4px">Abandon</button></div>`;
   }
   $('logbody').innerHTML = html;
   $('logbody').querySelectorAll('[data-ab]').forEach((b) => (b.onclick = () => { send({ t: 'quest', a: 'abandon', q: b.dataset.ab }); }));
@@ -973,28 +1086,31 @@ function hurtFlash(f) { hurtEl.style.transition = 'none'; hurtEl.style.opacity =
 function shake(a) { S.shake = Math.max(S.shake, a); }
 
 // ================================================================ maps
-const MAPRES = 2; // pixels per world unit on the base map
-const mapImg = document.createElement('canvas'); mapImg.width = mapImg.height = 300 * MAPRES;
+const MAPRES = 1.5; // pixels per world unit on the base map
+const MH = 240; // half the width of the map in world units
+const mapImg = document.createElement('canvas'); mapImg.width = mapImg.height = MH * 2 * MAPRES;
 let mapReady = false;
 function buildMapImage() {
-  const x = mapImg.getContext('2d'); const N = 300 * MAPRES;
+  const x = mapImg.getContext('2d'); const N = mapImg.width;
   const img = x.createImageData(N, N); const c = new THREE.Color();
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-    const wx = i / MAPRES - 150, wz = j / MAPRES - 150;
+    const wx = i / MAPRES - MH, wz = j / MAPRES - MH;
     const k = (j * N + i) * 4;
-    if (Math.hypot(wx, wz) > 141) { img.data[k] = 18; img.data[k + 1] = 14; img.data[k + 2] = 22; img.data[k + 3] = 255; continue; }
+    if (Math.hypot(wx, wz) > WORLD_R - 1) { img.data[k] = 18; img.data[k + 1] = 14; img.data[k + 2] = 22; img.data[k + 3] = 255; continue; }
     groundColor(wx, wz, c); c.convertLinearToSRGB?.();
     img.data[k] = Math.min(255, c.r * 255 * 1.25); img.data[k + 1] = Math.min(255, c.g * 255 * 1.25); img.data[k + 2] = Math.min(255, c.b * 255 * 1.25); img.data[k + 3] = 255;
   }
   x.putImageData(img, 0, 0);
-  const col = { oak: '#2e4a1e', pine: '#1a3018', deadtree: '#3a3430', rock: '#5a5650', grave: '#8a8590', ruin: '#7a7466', post: '#3a2a1c', tower: '#5a3a2a', pillar: '#8a8478', tent: '#8a6a40', crypt: '#2a2630', cliff: '#151218' };
+  const col = { oak: '#2e4a1e', pine: '#1a3018', deadtree: '#3a3430', rock: '#5a5650', grave: '#8a8590', ruin: '#7a7466', post: '#3a2a1c', tower: '#5a3a2a', pillar: '#8a8478', tent: '#8a6a40', crypt: '#2a2630', cliff: '#151218',
+    ridge: '#2a2630', snowpine: '#dfe8ee', icerock: '#a8c0d8', ashtree: '#1a1414', lavarock: '#3a1a10', bogtree: '#2a3a20', reeds: '#5a6a34', crystal: '#a87aff', chest: '#d8a860' };
   for (const o of world.obs) {
-    const px = (o.x + 150) * MAPRES, pz = (o.z + 150) * MAPRES;
+    const px = (o.x + MH) * MAPRES, pz = (o.z + MH) * MAPRES;
     if (o.box) { x.fillStyle = o.k === 'crypt' ? '#2a2630' : '#6a4a34'; x.fillRect(px - o.hw * MAPRES, pz - o.hd * MAPRES, o.hw * 2 * MAPRES, o.hd * 2 * MAPRES); continue; }
+    if (o.k === 'waystone') { x.fillStyle = '#7ad8ff'; x.beginPath(); x.arc(px, pz, 2.6 * MAPRES, 0, Math.PI * 2); x.fill(); continue; }
     if (!col[o.k]) continue;
-    x.fillStyle = col[o.k]; x.beginPath(); x.arc(px, pz, Math.max(1, o.r * MAPRES * (o.k === 'oak' || o.k === 'pine' ? 1.6 : 1)), 0, Math.PI * 2); x.fill();
+    x.fillStyle = col[o.k]; x.beginPath(); x.arc(px, pz, Math.max(1, o.r * MAPRES * (o.k === 'oak' || o.k === 'pine' || o.k === 'snowpine' || o.k === 'bogtree' ? 1.6 : 1)), 0, Math.PI * 2); x.fill();
   }
-  x.fillStyle = '#5a8ab8'; x.beginPath(); x.arc(150 * MAPRES, 150 * MAPRES, 2.3 * MAPRES, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#5a8ab8'; x.beginPath(); x.arc(MH * MAPRES, MH * MAPRES, 2.3 * MAPRES, 0, Math.PI * 2); x.fill();
   mapReady = true;
 }
 function drawMarkers(x, toPx, scale, big) {
@@ -1021,7 +1137,7 @@ function drawMinimap() {
   const R = 48; // world units shown from centre to edge
   const cx = S.me.x, cz = S.me.z;
   x.fillStyle = '#100c14'; x.fillRect(0, 0, W, W);
-  x.drawImage(mapImg, (cx - R + 150) * MAPRES, (cz - R + 150) * MAPRES, R * 2 * MAPRES, R * 2 * MAPRES, 0, 0, W, W);
+  x.drawImage(mapImg, (cx - R + MH) * MAPRES, (cz - R + MH) * MAPRES, R * 2 * MAPRES, R * 2 * MAPRES, 0, 0, W, W);
   const s = W / (R * 2);
   drawMarkers(x, (wx, wz) => [(wx - cx + R) * s, (wz - cz + R) * s], s, false);
   const g = x.createRadialGradient(W / 2, W / 2, W * 0.35, W / 2, W / 2, W * 0.5); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.55)');
@@ -1031,22 +1147,26 @@ function drawBigMap() {
   if (!mapReady) buildMapImage();
   const cv = $('bigmap'); const x = cv.getContext('2d'); const W = cv.width;
   x.drawImage(mapImg, 0, 0, W, W);
-  const s = W / 300;
-  const toPx = (wx, wz) => [(wx + 150) * s, (wz + 150) * s];
+  const s = W / (MH * 2);
+  const toPx = (wx, wz) => [(wx + MH) * s, (wz + MH) * s];
   x.textAlign = 'center';
-  const labels = [['meadow', 0, -88], ['thorn', 88, 0], ['grave', 0, 88], ['crypt', -84, -18]];
+  const text = (t, px, py, font, fill) => { x.font = font; x.fillStyle = fill; x.strokeStyle = 'rgba(0,0,0,.85)'; x.lineWidth = 4; x.strokeText(t, px, py); x.fillText(t, px, py); };
+  const labels = [['meadow', 0, -88], ['thorn', 88, 0], ['grave', 0, 88], ['crypt', -84, -18], ['frost', -88, -186], ['ember', 196, -60], ['mire', 60, 196], ['spire', -178, -70]];
   for (const [k, wx, wz] of labels) {
     const [px, py] = toPx(wx, wz);
-    x.font = `700 ${Math.round(W * 0.034)}px "Grenze Gotisch", Georgia, serif`; x.fillStyle = '#f3dfb2'; x.strokeStyle = 'rgba(0,0,0,.85)'; x.lineWidth = 5;
-    x.strokeText(ZONES[k].name, px, py); x.fillText(ZONES[k].name, px, py);
-    x.font = `600 ${Math.round(W * 0.018)}px "Alegreya Sans", sans-serif`; x.fillStyle = '#d8c8a8';
-    const t = `Level ${ZONES[k].lv[0]}–${ZONES[k].lv[1]}`; x.strokeText(t, px, py + W * 0.028); x.fillText(t, px, py + W * 0.028);
+    text(ZONES[k].name, px, py, `700 ${Math.round(W * 0.026)}px "Grenze Gotisch", Georgia, serif`, '#f3dfb2');
+    text(`Level ${ZONES[k].lv[0]}–${ZONES[k].lv[1]}`, px, py + W * 0.022, `600 ${Math.round(W * 0.015)}px "Alegreya Sans", sans-serif`, '#d8c8a8');
   }
-  const [tx, ty] = toPx(0, 0);
-  x.font = `700 ${Math.round(W * 0.028)}px "Grenze Gotisch", Georgia, serif`; x.fillStyle = '#ffd27a'; x.strokeText('Duskhold', tx, ty - W * 0.09); x.fillText('Duskhold', tx, ty - W * 0.09);
-  const [bx, by] = toPx(BOSS_ARENA.x, BOSS_ARENA.z);
-  x.font = `${Math.round(W * 0.04)}px serif`; x.fillText('☠', bx, by + W * 0.012);
-  x.font = `600 ${Math.round(W * 0.017)}px "Alegreya Sans", sans-serif`; x.fillStyle = '#9affaa'; x.strokeText('Morvath', bx, by + W * 0.045); x.fillText('Morvath', bx, by + W * 0.045);
+  for (const t of TOWNS) {
+    const [px, py] = toPx(t.x, t.z);
+    const known = S.inv?.wp?.includes(t.id);
+    text(t.name, px, py - (t.id === 'town' ? W * 0.065 : W * 0.04), `700 ${Math.round(W * 0.022)}px "Grenze Gotisch", Georgia, serif`, known ? '#ffd27a' : '#b8a888');
+  }
+  for (const [A, nm, cc] of [[BOSS_ARENA, 'Morvath', '#9affaa'], [BOSS_ARENA2, 'Nharzul', '#d0a8ff']]) {
+    const [bx, by] = toPx(A.x, A.z);
+    text('☠', bx, by + W * 0.01, `${Math.round(W * 0.032)}px serif`, cc);
+    text(nm, bx, by + W * 0.035, `600 ${Math.round(W * 0.015)}px "Alegreya Sans", sans-serif`, cc);
+  }
   drawMarkers(x, toPx, s, true);
 }
 
@@ -1057,6 +1177,13 @@ const ATMOS = {
   thorn: { fog: '#1d2a22', sky: '#8eac98', gnd: '#1e2418', sun: '#e8c08c', si: 2.0, near: 30, far: 86 },
   grave: { fog: '#272138', sky: '#8a78b0', gnd: '#201a28', sun: '#c0a8e0', si: 1.6, near: 30, far: 88 },
   crypt: { fog: '#18211b', sky: '#6f9076', gnd: '#1a1a14', sun: '#9ae09a', si: 1.4, near: 26, far: 80 },
+  frost: { fog: '#55606e', sky: '#c8d8ec', gnd: '#4a505a', sun: '#d8e4ff', si: 1.7, near: 26, far: 82 },
+  ember: { fog: '#2a1612', sky: '#d08a6a', gnd: '#2a1410', sun: '#ff8a4a', si: 1.9, near: 30, far: 88 },
+  mire: { fog: '#1e2a24', sky: '#8aa890', gnd: '#1a2018', sun: '#c8d8a0', si: 1.5, near: 22, far: 74 },
+  spire: { fog: '#1c1428', sky: '#9a7ad0', gnd: '#1a1222', sun: '#c8a0ff', si: 1.5, near: 28, far: 84 },
+  frosthaven: { fog: '#4a5462', sky: '#d0dcf0', gnd: '#4a4e58', sun: '#ffe0c0', si: 2.0, near: 38, far: 100 },
+  cinderwatch: { fog: '#2e1e1a', sky: '#d8a080', gnd: '#30201a', sun: '#ffa060', si: 2.1, near: 38, far: 100 },
+  mirebrook: { fog: '#24302a', sky: '#a0b8a0', gnd: '#20281e', sun: '#ffd8a0', si: 1.9, near: 36, far: 98 },
 };
 const atm = { fog: new THREE.Color('#2c2536'), sky: new THREE.Color('#a08cc8'), gnd: new THREE.Color('#2c2218'), sun: new THREE.Color('#ffb27a'), si: 2.3, near: 42, far: 105 };
 const _c = new THREE.Color();
@@ -1088,11 +1215,20 @@ function ambient(dt, cx, cz, zone, t) {
     if (Math.abs(em.x - cx) > 40 || Math.abs(em.z - cz) > 40) continue;
     if (em.kind === 'fountain') parts.emit(em.x, em.y, em.z, { n: 3, color: 0x8ac8ff, color2: 0xe0f4ff, speed: 1.6, up: 1.5, life: [0.5, 0.8], size: [0.12, 0.2], grav: 9 });
     else if (em.kind === 'ember' && Math.random() < 0.3) parts.emit(em.x, em.y + 0.2, em.z, { n: 1, color: 0xff9a40, speed: 0.3, life: [0.6, 1.2], size: [0.07, 0.12], vy: 1.4 });
+    else if (em.kind === 'voidfire') parts.emit(em.x, em.y, em.z, { n: 2, color: 0x9a5aff, color2: 0xe0c8ff, speed: 0.3, life: [0.4, 0.8], size: [0.3, 0.5], vy: 2, radius: 0.3 });
+    else if (em.kind === 'waystone' && Math.random() < 0.5) parts.emit(em.x + (Math.random() - 0.5) * 1.6, em.y, em.z + (Math.random() - 0.5) * 1.6, { n: 1, color: 0x7ad8ff, color2: 0xe0f8ff, speed: 0.1, life: [1.2, 2], size: [0.1, 0.18], vy: 1.2 });
     else if (em.kind === 'greenfire') parts.emit(em.x, em.y, em.z, { n: 2, color: 0x4aff6a, color2: 0xc0ffc0, speed: 0.3, life: [0.4, 0.8], size: [0.3, 0.5], vy: 2, radius: 0.3 });
     else if (em.kind === 'campfire') parts.emit(em.x, em.y, em.z, { n: 2, color: 0xff6a10, color2: 0xffc050, speed: 0.3, life: [0.4, 0.8], size: [0.35, 0.6], vy: 1.8, radius: 0.3, grow: -0.5 });
     else if (em.kind === 'smoke' && Math.random() < 0.5) parts.emit(em.x, em.y, em.z, { n: 1, color: 0x2a2626, speed: 0.2, life: [2, 3], size: [0.8, 1.2], vy: 1.2, grow: 1.5 });
   }
-  const motes = { meadow: [0xd8ff7a, 0.5], thorn: [0xb8e0a0, 0.35], grave: [0xa890ff, 0.35], crypt: [0x6aff8a, 0.45], town: [0xffc070, 0.15] }[zone];
+  if (zone === 'frost' || zone === 'frosthaven') {
+    // snowfall
+    for (let i = 0; i < (zone === 'frost' ? 4 : 2); i++) { const a = Math.random() * Math.PI * 2, r = Math.random() * 26; parts.emit(cx + Math.cos(a) * r, 9 + Math.random() * 4, cz + Math.sin(a) * r, { n: 1, color: 0xffffff, color2: 0xdde8ff, speed: 0.6, vy: -2.2, life: [3.5, 5], size: [0.1, 0.18] }); }
+  }
+  if (zone === 'ember' || zone === 'cinderwatch') {
+    for (let i = 0; i < 2; i++) { const a = Math.random() * Math.PI * 2, r = Math.random() * 24; parts.emit(cx + Math.cos(a) * r, 0.3, cz + Math.sin(a) * r, { n: 1, color: 0xff7a20, color2: 0xffd060, speed: 0.4, vy: 1.6, life: [1.5, 3], size: [0.07, 0.13] }); }
+  }
+  const motes = { meadow: [0xd8ff7a, 0.5], thorn: [0xb8e0a0, 0.35], grave: [0xa890ff, 0.35], crypt: [0x6aff8a, 0.45], town: [0xffc070, 0.15], mire: [0xe0ff6a, 0.7], mirebrook: [0xe0ff6a, 0.4], spire: [0xc08aff, 0.6] }[zone];
   if (motes && Math.random() < motes[1]) {
     const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 22;
     parts.emit(cx + Math.cos(a) * r, 0.5 + Math.random() * 3, cz + Math.sin(a) * r, { n: 1, color: motes[0], speed: 0.4, life: [2, 4], size: [0.1, 0.18], vy: 0.15 });
@@ -1166,9 +1302,9 @@ function frame() {
   if (!me.dead && !me.dash) {
     if (K.has('w') || K.has('arrowup')) mz -= 1; if (K.has('s') || K.has('arrowdown')) mz += 1;
     if (K.has('a') || K.has('arrowleft')) mx -= 1; if (K.has('d') || K.has('arrowright')) mx += 1;
-    if (mx || mz) { S.path = null; S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; }
+    if (mx || mz) { S.path = null; S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; }
     else {
-      if (S.mouse.down && performance.now() - S.mouse.downAt > 220 && !S.attackTarget && !S.mouse.shift && !S.npcTarget && !S.lootTarget && !anyWindowOpen()) {
+      if (S.mouse.down && performance.now() - S.mouse.downAt > 220 && !S.attackTarget && !S.mouse.shift && !S.npcTarget && !S.lootTarget && !S.objTarget && !anyWindowOpen()) {
         const g = groundAt(S.mouse.x, S.mouse.y);
         if (Math.hypot(g.x - me.x, g.z - me.z) > 0.6) S.path = [g];
       }
@@ -1189,7 +1325,7 @@ function frame() {
       }
       if (S.path && S.path.length) {
         const wp = S.path[0]; const dx = wp.x - me.x, dz = wp.z - me.z, d = Math.hypot(dx, dz);
-        const stopAt = S.path.length === 1 ? (S.npcTarget ? 3.5 : S.lootTarget ? 1.5 : 0.15) : 0.3;
+        const stopAt = S.path.length === 1 ? (S.npcTarget ? 3.5 : S.objTarget ? 1.2 : S.lootTarget ? 1.5 : 0.15) : 0.3;
         if (d < stopAt) S.path.shift(); else { mx = dx / d; mz = dz / d; }
         if (!S.path.length) S.path = null;
       }
@@ -1210,12 +1346,16 @@ function frame() {
   }
   // arrival checks
   if (S.npcTarget) { const n = S.npcs.find((q) => q.id === S.npcTarget); if (n && Math.hypot(n.x - me.x, n.z - me.z) < 4.2) { S.npcTarget = null; S.path = null; openNpc(n.id); } else if (!S.path) S.npcTarget = null; }
+  if (S.objTarget) { const o = S.objTarget; if (Math.hypot(o.x - me.x, o.z - me.z) < 3.5) { S.objTarget = null; S.path = null; openObj(o); } else if (!S.path) S.objTarget = null; }
   if (S.lootTarget) { const l = S.loot.get(S.lootTarget); if (!l) S.lootTarget = null; else if (Math.hypot(l.x - me.x, l.z - me.z) < 2.5) { send({ t: 'pick', id: l.id }); S.lootTarget = null; S.path = null; } else if (!S.path) S.lootTarget = null; }
   // walking away from an NPC closes their window
-  if (!$('shopwin').hidden || !$('questwin').hidden) {
-    const far = (id) => { const n = S.npcs.find((q) => q.id === id); return Math.hypot(n.x - me.x, n.z - me.z) > 9; };
-    if (!$('shopwin').hidden && far('borin')) { $('shopwin').hidden = true; if (!$('charwin').hidden) renderChar(); }
-    if (!$('questwin').hidden && far('maren')) $('questwin').hidden = true;
+  {
+    const far = (id) => { const n = NPC_BY_ID[id]; return !n || Math.hypot(n.x - me.x, n.z - me.z) > 9; };
+    const farObj = (o) => !o || Math.hypot(o.x - me.x, o.z - me.z) > 6;
+    if (!$('shopwin').hidden && far(S.shopNpc)) { $('shopwin').hidden = true; if (!$('charwin').hidden) renderChar(); }
+    if (!$('questwin').hidden && far(S.questNpc)) $('questwin').hidden = true;
+    if (!$('stashwin').hidden && farObj(S.openObj)) { $('stashwin').hidden = true; if (!$('charwin').hidden) renderChar(); }
+    if (!$('waywin').hidden && farObj(S.openObj)) $('waywin').hidden = true;
   }
   // send position
   if (!me.dead && performance.now() - S.lastSent > 50 && (Math.abs(me.x - S.sentX) > 0.01 || Math.abs(me.z - S.sentZ) > 0.01 || Math.abs(me.rot - S.sentR) > 0.05)) {
@@ -1260,7 +1400,8 @@ function frame() {
   }
   for (const n of S.npcs) {
     const d = Math.hypot(n.x - me.x, n.z - me.z);
-    const want = d < 9 ? Math.atan2(me.x - n.x, me.z - n.z) : Math.atan2(-n.x, -n.z + 2);
+    if (d > 60) continue;
+    const want = d < 9 ? Math.atan2(me.x - n.x, me.z - n.z) : npcHome(n);
     n.rig.root.rotation.y = angLerp(n.rig.root.rotation.y, want, 1 - Math.exp(-dt * 4));
     animateRig(n, dt, false, t);
     n.marker.position.y = 4.3 + Math.sin(t * 2.5) * 0.12;
@@ -1299,6 +1440,7 @@ function frame() {
     }
   }
   if (WV.bossRing) WV.bossRing.material.opacity = 0.25 + 0.15 * Math.sin(t * 2);
+  if (WV.bossRing2) { WV.bossRing2.material.opacity = 0.25 + 0.15 * Math.sin(t * 1.6); WV.bossRing2.rotation.z = t * 0.15; WV.bossRing3.rotation.z = -t * 0.25; }
   const r0 = performance.now();
   renderer.render(scene, camera);
   const r1 = performance.now();
@@ -1314,7 +1456,7 @@ function updateTargetFrame(e) {
   tf.querySelector('.bar span').textContent = e.boss && e.bhp != null ? `${e.bhp} / ${e.bmhp}` : `${Math.ceil(f * 100)}%`;
   const lv = S.inv?.lvl || 1; const diff = e.lvl - lv;
   const col = diff >= 3 ? '#ff5a4a' : diff >= 1 ? '#ffb04a' : diff <= -4 ? '#8a8a8a' : '#d8d0b8';
-  tf.querySelector('.sub').innerHTML = `<span style="color:${col}">Level ${e.lvl}</span>${e.flags & 1 ? ' · Champion' : ''}${e.boss ? ' · Lord of the Hollow Crypt' : ''}${e.flags & 2 ? ' · Frozen' : ''}${e.flags & 4 ? ' · Stunned' : ''}${e.flags & 8 ? ' · <span style="color:#ff5a4a">Enraged</span>' : ''}`;
+  tf.querySelector('.sub').innerHTML = `<span style="color:${col}">Level ${e.lvl}</span>${e.flags & 1 ? ' · Champion' : ''}${e.boss ? (e.type === 'boss2' ? ' · Heart of the Shattered Spire' : ' · Lord of the Hollow Crypt') : ''}${e.flags & 2 ? ' · Frozen' : ''}${e.flags & 4 ? ' · Stunned' : ''}${e.flags & 8 ? ' · <span style="color:#ff5a4a">Enraged</span>' : ''}`;
 }
 function placeLabel(el, x, y, z) {
   const s = project(x, y, z);
@@ -1338,6 +1480,12 @@ function updateLabels(tgt) {
     }
   }
   for (const n of S.npcs) placeLabel(n.label, n.x, 2.45, n.z);
+  for (const o of S.objs) {
+    const near = Math.hypot(o.x - S.me.x, o.z - S.me.z) < 18 || S.hoverObj === o;
+    if (!near) { o.label.style.display = 'none'; continue; }
+    placeLabel(o.label, o.x, o.k === 'chest' ? 1.4 : 4.0, o.z);
+    o.label.style.color = S.hoverObj === o ? '#fff' : '';
+  }
   for (const l of S.loot.values()) if (l.label) placeLabel(l.label, l.x, 1.05, l.z);
 }
 let lastW = 0, lastH = 0;
