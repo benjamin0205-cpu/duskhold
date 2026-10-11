@@ -4,11 +4,11 @@ import {
   Game, World, CLASSES, CLASS_LIST, MONSTERS, MONSTER_LIST, ZONES, zoneAt, zoneLevel, QUESTS, QUEST_BY_ID, questState, npcMarker,
   NPCS, SLOTS, SLOT_NAMES, RARITY, RARITY_COLORS, AFFIX, computeStats, xpNeed, PLAYER_R, TOWN_R, BOSS_ARENA, MAX_LEVEL, POTION_COST,
   gambleCost, INV_SIZE, TICK, WORLD_R, ROADS, roadWiggle, TOWNS, TOWN_BY_ID, isSafe, SHOPS, SHOP_INFO, NPC_BY_ID,
-  BOSS_ARENA2, INV_MAX, STASH_MAX, INNER_R,
+  BOSS_ARENA2, INV_MAX, STASH_MAX, INNER_R, PROPS,
 } from '../sim.js';
 import { sfx, initAudio, setSound, setMusic } from './audio.js';
 import { paintAbility, drawItemInto } from './icons.js';
-import { buildWorld, makePlayerModel, makeNpcModel, makeMonsterModel, makeLootModel, glowSprite, groundColor, CLASS_LOOK } from './models.js';
+import { buildWorld, buildProps, makePlayerModel, makeNpcModel, makeMonsterModel, makeLootModel, glowSprite, groundColor, CLASS_LOOK } from './models.js';
 import { Particles, Projectiles, Telegraphs, Rings, Swooshes, FloatText } from './fx.js';
 
 const $ = (id) => document.getElementById(id);
@@ -51,6 +51,7 @@ const lightPool = []; for (let i = 0; i < 3; i++) { const l = new THREE.PointLig
 
 const world = new World(SEED);
 const WV = buildWorld(scene, world);
+const PV = buildProps(scene, world.props);
 const parts = new Particles(scene);
 const projs = new Projectiles(scene, parts);
 const tgs = new Telegraphs(scene);
@@ -79,6 +80,7 @@ const S = {
   hoverMon: null, hoverNpc: null, ground: { x: 0, z: 0 },
   zone: null, lastSent: 0, sentX: 0, sentZ: 0, sentR: 0, zoom: 1, shake: 0,
   cam: { x: 0, z: 0 }, deathT: 0, lastBossWake: 0, discardArm: null,
+  broken: new Set(), hoverProp: null, propTarget: null,
 };
 
 // ================================================================ networking
@@ -221,6 +223,7 @@ for (const n of NPCS) {
   for (const m of rig.mats) m.userData.e0 = m.emissive.clone();
   S.npcs.push({ ...n, rig, label, marker: mk, walk: 0, atk: 0, rot: rig.root.rotation.y, seed: Math.random() * 6 });
 }
+const propLabel = makeLabel('obj prop'); propLabel.style.display = 'none'; propLabel.style.pointerEvents = 'none';
 // chests and waystones you can click
 S.objs = world.obs.filter((o) => o.k === 'chest' || o.k === 'waystone').map((o) => {
   const label = makeLabel('obj'); label.textContent = o.k === 'chest' ? 'Chest' : 'Waystone';
@@ -323,6 +326,14 @@ function onMessage(m) {
       S.me.dead = true; S.deathT = 5; S.path = null; S.attackTarget = null;
       $('death').hidden = false; $('deathby').textContent = `Slain by ${m.by}.${m.lost ? ` You dropped ${m.lost} gold.` : ''} You will rise in ${TOWN_BY_ID[S.inv?.home]?.name || 'town'}…`;
       sfx.pdie();
+      return;
+    }
+    case 'props': {
+      const nb = new Set(m.b);
+      for (const id of S.broken) if (!nb.has(id)) PV.setBroken(id, false);
+      for (const id of nb) PV.setBroken(id, true);
+      S.broken = nb;
+      if (S.propTarget !== null && nb.has(S.propTarget)) S.propTarget = null;
       return;
     }
     case 'shop': m._at = performance.now(); S.shop = m; if (!$('shopwin').hidden && S.shopNpc === m.n) renderShop(); return;
@@ -455,6 +466,14 @@ function onFx(e, v) {
     case 'slam': shake(0.8); rings.add(e.x, e.z, 0.5, e.r + 0.5, 0.5, 0xff3020); parts.emit(e.x, 0.3, e.z, { n: 60, color: 0x6a5040, color2: 0xb0a080, speed: 9, ring: true, life: [0.3, 0.7], size: [0.4, 0.8], drag: 0.9, vy: 2 }); sfx.stomp(); return;
     case 'spikes': parts.emit(e.x, 0.2, e.z, { n: 40, color: 0xe8e0d0, color2: 0x9aff9a, speed: 2, radius: e.r * 0.8, life: [0.3, 0.6], size: [0.25, 0.4], vy: 9, grav: 20 }); sfx.hit(v); return;
     case 'summon': rings.add(e.x, e.z, 1, 7, 1.0, 0x6aff8a); parts.emit(e.x, 0.5, e.z, { n: 60, color: 0x3aff6a, color2: 0xc0ffd0, speed: 5, ring: true, life: [0.6, 1.0], size: [0.3, 0.5], vy: 3 }); sfx.bossWake(); return;
+    case 'smash': {
+      const C = { barrel: [0x7a5230, 0xb08850], crate: [0x9a7848, 0xd0b080], urn: [0xa8643a, 0xe0a070], bones: [0xd8d0bc, 0xffffff], sarc: [0x8a8494, 0xc0bac8], trove: [0xffd040, 0xfff0a0] }[e.pk] || [0x888888, 0xcccccc];
+      parts.emit(e.x, 0.6, e.z, { n: e.pk === 'trove' ? 50 : 26, color: C[0], color2: C[1], speed: 4.5, life: [0.4, 0.9], size: [0.18, 0.38], grav: 14, vy: 4, drag: 0.96 });
+      parts.emit(e.x, 0.3, e.z, { n: 10, color: 0x5a5048, speed: 1.2, life: [0.6, 1.1], size: [0.4, 0.7], vy: 0.6, grow: 1 });
+      if (e.pk === 'trove') { rings.add(e.x, e.z, 0.3, 2.2, 0.5, 0xffd060); sfx.gold(); }
+      sfx.smash(e.pk, v);
+      return;
+    }
     case 'travel': rings.add(e.x, e.z, 0.4, 3.5, 0.7, 0x7ad8ff); parts.emit(e.x, 0.4, e.z, { n: 50, color: 0x7ad8ff, color2: 0xffffff, speed: 0.8, radius: 0.9, life: [0.6, 1.2], size: [0.2, 0.4], vy: 6 }); return;
     case 'respawn': parts.emit(e.x, 0.3, e.z, { n: 50, color: 0x9ad0ff, color2: 0xffffff, speed: 0.8, radius: 0.8, life: [0.8, 1.4], size: [0.25, 0.4], vy: 5 }); return;
   }
@@ -578,7 +597,17 @@ function pickHover() {
   S.hoverNpc = null; S.hoverObj = null;
   if (!best) for (const n of S.npcs) { if (Math.abs(n.x - S.me.x) > 40 || Math.abs(n.z - S.me.z) > 40) continue; const s = project(n.x, 1.2, n.z); if (s && Math.hypot(s.x - mx, (s.y - my) * 0.7) < 42) S.hoverNpc = n; }
   if (!best && !S.hoverNpc) for (const o of S.objs) { if (Math.abs(o.x - S.me.x) > 40 || Math.abs(o.z - S.me.z) > 40) continue; const s = project(o.x, o.k === 'chest' ? 0.5 : 1.5, o.z); if (s && Math.hypot(s.x - mx, (s.y - my) * (o.k === 'chest' ? 1 : 0.6)) < 40) S.hoverObj = o; }
-  canvas.style.cursor = best ? 'crosshair' : S.hoverNpc || S.hoverObj ? 'pointer' : 'default';
+  S.hoverProp = null;
+  if (!best && !S.hoverNpc && !S.hoverObj) {
+    let pd = 30;
+    for (const pr of world.props) {
+      if (Math.abs(pr.x - S.me.x) > 32 || Math.abs(pr.z - S.me.z) > 32 || S.broken.has(pr.id)) continue;
+      const sp = project(pr.x, 0.5, pr.z); if (!sp) continue;
+      const d = Math.hypot(sp.x - mx, sp.y - my);
+      if (d < pd) { pd = d; S.hoverProp = pr; }
+    }
+  }
+  canvas.style.cursor = best ? 'crosshair' : S.hoverNpc || S.hoverObj || S.hoverProp ? 'pointer' : 'default';
 }
 const WINS = ['charwin', 'shopwin', 'questwin', 'logwin', 'helpwin', 'mapwin', 'stashwin', 'waywin'];
 function anyWindowOpen() { return WINS.some((id) => !$(id).hidden); }
@@ -595,10 +624,11 @@ canvas.addEventListener('pointerdown', (e) => {
   S.mouse.down = true; S.mouse.downAt = performance.now();
   if (S.me.dead) return;
   if (e.shiftKey) { castSlot(0, S.hoverMon ? { x: S.hoverMon.x, z: S.hoverMon.z } : g); return; }
-  if (S.hoverMon) { S.attackTarget = S.hoverMon.id; S.path = null; S.npcTarget = null; S.lootTarget = null; return; }
+  if (S.hoverMon) { S.attackTarget = S.hoverMon.id; S.path = null; S.npcTarget = null; S.lootTarget = null; S.propTarget = null; return; }
   if (S.hoverNpc) { goToNpc(S.hoverNpc); return; }
   if (S.hoverObj) { goToObj(S.hoverObj); return; }
-  S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null;
+  if (S.hoverProp) { goToProp(S.hoverProp); return; }
+  S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; S.propTarget = null;
   S.path = findPath(S.me.x, S.me.z, g.x, g.z);
   rings.add(g.x, g.z, 0.2, 0.9, 0.35, 0xffd27a, 0.06, 0.3);
 });
@@ -606,6 +636,19 @@ window.addEventListener('pointerup', (e) => { if (e.button === 0) { S.mouse.down
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); S.zoom = Math.min(1.45, Math.max(0.6, S.zoom * (e.deltaY > 0 ? 1.08 : 0.93))); }, { passive: false });
 function goToNpc(n) { S.npcTarget = n.id; S.objTarget = null; S.attackTarget = null; S.lootTarget = null; if (Math.hypot(n.x - S.me.x, n.z - S.me.z) < 4.5) { openNpc(n.id); S.npcTarget = null; S.path = null; } else S.path = findPath(S.me.x, S.me.z, n.x, n.z + 1.6); }
+function goToProp(pr) {
+  if (S.me.dead) return;
+  S.propTarget = pr.id; S.objTarget = null; S.npcTarget = null; S.attackTarget = null; S.lootTarget = null;
+  if (Math.hypot(pr.x - S.me.x, pr.z - S.me.z) < 2.6) { smashNow(pr); S.path = null; }
+  else S.path = findPath(S.me.x, S.me.z, pr.x, pr.z);
+}
+function smashNow(pr) {
+  S.propTarget = null;
+  send({ t: 'smash', id: pr.id });
+  const ang = Math.atan2(pr.x - S.me.x, pr.z - S.me.z); S.me.rot = ang;
+  const pe = S.players.get(S.id);
+  if (pe && pr.k !== 'trove') { pe.rot = ang; pe.atk = pe.atkDur = 0.32; pe.atkKind = 'melee'; sfx.swing(); }
+}
 function goToObj(o) {
   if (S.me.dead) return;
   S.objTarget = o; S.npcTarget = null; S.attackTarget = null; S.lootTarget = null;
@@ -1121,6 +1164,7 @@ function drawMarkers(x, toPx, scale, big) {
     x.fillStyle = e.boss ? '#8aff9a' : e.flags & 1 ? '#7aa8ff' : '#e04030';
     x.beginPath(); x.arc(px, py, e.boss ? 5 : big ? 2.5 : 3, 0, Math.PI * 2); x.fill();
   }
+  for (const pr of world.props) { if (pr.k !== 'trove' || S.broken.has(pr.id) || Math.abs(pr.x - S.me.x) > (big ? 999 : 50) || Math.abs(pr.z - S.me.z) > (big ? 999 : 50)) continue; if (big && Math.hypot(pr.x - S.me.x, pr.z - S.me.z) > 60) continue; const [px, py] = toPx(pr.x, pr.z); x.fillStyle = '#ffc840'; x.fillRect(px - 2.5, py - 2, 5, 4); }
   for (const n of S.npcs) { const [px, py] = toPx(n.x, n.z); x.fillStyle = '#ffd34a'; x.beginPath(); x.arc(px, py, 3.5, 0, Math.PI * 2); x.fill(); }
   for (const p of S.players.values()) {
     if (p.id === S.id) continue; const [px, py] = toPx(p.x, p.z);
@@ -1302,9 +1346,9 @@ function frame() {
   if (!me.dead && !me.dash) {
     if (K.has('w') || K.has('arrowup')) mz -= 1; if (K.has('s') || K.has('arrowdown')) mz += 1;
     if (K.has('a') || K.has('arrowleft')) mx -= 1; if (K.has('d') || K.has('arrowright')) mx += 1;
-    if (mx || mz) { S.path = null; S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; }
+    if (mx || mz) { S.path = null; S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; S.propTarget = null; }
     else {
-      if (S.mouse.down && performance.now() - S.mouse.downAt > 220 && !S.attackTarget && !S.mouse.shift && !S.npcTarget && !S.lootTarget && !S.objTarget && !anyWindowOpen()) {
+      if (S.mouse.down && performance.now() - S.mouse.downAt > 220 && !S.attackTarget && !S.mouse.shift && !S.npcTarget && !S.lootTarget && !S.objTarget && S.propTarget === null && !anyWindowOpen()) {
         const g = groundAt(S.mouse.x, S.mouse.y);
         if (Math.hypot(g.x - me.x, g.z - me.z) > 0.6) S.path = [g];
       }
@@ -1325,7 +1369,7 @@ function frame() {
       }
       if (S.path && S.path.length) {
         const wp = S.path[0]; const dx = wp.x - me.x, dz = wp.z - me.z, d = Math.hypot(dx, dz);
-        const stopAt = S.path.length === 1 ? (S.npcTarget ? 3.5 : S.objTarget ? 1.2 : S.lootTarget ? 1.5 : 0.15) : 0.3;
+        const stopAt = S.path.length === 1 ? (S.npcTarget ? 3.5 : S.objTarget ? 1.2 : S.propTarget !== null ? 1.8 : S.lootTarget ? 1.5 : 0.15) : 0.3;
         if (d < stopAt) S.path.shift(); else { mx = dx / d; mz = dz / d; }
         if (!S.path.length) S.path = null;
       }
@@ -1346,6 +1390,7 @@ function frame() {
   }
   // arrival checks
   if (S.npcTarget) { const n = S.npcs.find((q) => q.id === S.npcTarget); if (n && Math.hypot(n.x - me.x, n.z - me.z) < 4.2) { S.npcTarget = null; S.path = null; openNpc(n.id); } else if (!S.path) S.npcTarget = null; }
+  if (S.propTarget !== null) { const pr = world.props[S.propTarget]; if (Math.hypot(pr.x - me.x, pr.z - me.z) < 2.6) { S.path = null; smashNow(pr); } else if (!S.path) S.propTarget = null; }
   if (S.objTarget) { const o = S.objTarget; if (Math.hypot(o.x - me.x, o.z - me.z) < 3.5) { S.objTarget = null; S.path = null; openObj(o); } else if (!S.path) S.objTarget = null; }
   if (S.lootTarget) { const l = S.loot.get(S.lootTarget); if (!l) S.lootTarget = null; else if (Math.hypot(l.x - me.x, l.z - me.z) < 2.5) { send({ t: 'pick', id: l.id }); S.lootTarget = null; S.path = null; } else if (!S.path) S.lootTarget = null; }
   // walking away from an NPC closes their window
@@ -1423,6 +1468,7 @@ function frame() {
   pickHover();
   const tgt = S.hoverMon || (S.attackTarget ? S.monsters.get(S.attackTarget) : null);
   if (tgt && !tgt.dying) { hoverRing.visible = true; hoverRing.position.set(tgt.x, 0.05, tgt.z); hoverRing.scale.setScalar(tgt.def.r * (tgt.flags & 1 ? 1.6 : 1.3) * (tgt.boss ? 1.5 : 1)); hoverRing.material.color.set(S.hoverMon ? 0xff4a3a : 0xff8a3a); }
+  else if (S.hoverProp) { const pr = S.hoverProp; hoverRing.visible = true; hoverRing.position.set(pr.x, 0.05, pr.z); hoverRing.scale.setScalar(PROPS[pr.k].r + 0.45); hoverRing.material.color.set(0xffc860); }
   else hoverRing.visible = false;
   updateTargetFrame(tgt);
   updateLabels(tgt);
@@ -1480,6 +1526,7 @@ function updateLabels(tgt) {
     }
   }
   for (const n of S.npcs) placeLabel(n.label, n.x, 2.45, n.z);
+  if (S.hoverProp) { propLabel.textContent = PROPS[S.hoverProp.k].name; placeLabel(propLabel, S.hoverProp.x, 1.5, S.hoverProp.z); } else propLabel.style.display = 'none';
   for (const o of S.objs) {
     const near = Math.hypot(o.x - S.me.x, o.z - S.me.z) < 18 || S.hoverObj === o;
     if (!near) { o.label.style.display = 'none'; continue; }

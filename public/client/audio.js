@@ -79,6 +79,13 @@ export const sfx = {
     [523, 659, 784, 1046, 1319, 1568].forEach((f, i) => { tone('sine', f, f, 1.1, 0.11, i * 0.08); tone('triangle', f * 2, f * 2, 0.6, 0.03, i * 0.08); });
     tone('sine', 65, 65, 1.5, 0.25);
   },
+  smash(k, v = 1) {
+    if (!gate('smash', 40)) return;
+    if (k === 'urn' || k === 'sarc') { noise(0.3, 0.45 * v, 'highpass', 1800, 900, 1); tone('triangle', 1400, 500, 0.12, 0.08 * v); }
+    else if (k === 'bones') { for (let i = 0; i < 4; i++) noise(0.05, 0.3 * v, 'bandpass', 2600 - i * 300, 1500, 3, i * 0.04); }
+    else if (k === 'trove') { tone('sawtooth', 120, 90, 0.25, 0.08 * v); [784, 988, 1175, 1568].forEach((f, i) => tone('triangle', f, f, 0.4, 0.09 * v, 0.1 + i * 0.07)); }
+    else { noise(0.32, 0.5 * v, 'bandpass', 700, 220, 1.1); tone('sine', 140, 60, 0.18, 0.25 * v); }
+  },
   pickup() { tone('triangle', 600, 900, 0.07, 0.1); },
   levelup() { [392, 523, 659, 784, 1046].forEach((f, i) => { tone('triangle', f, f, 0.7, 0.12, i * 0.09); tone('sine', f / 2, f / 2, 0.7, 0.06, i * 0.09); }); },
   quest() { [587, 740, 880].forEach((f, i) => tone('triangle', f, f, 0.45, 0.12, i * 0.12)); },

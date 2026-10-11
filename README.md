@@ -19,6 +19,9 @@ være i samme verden på én gang.
 - **Loot i 5 sjældenheder** (hvid, blå, gul, lilla og orange). Hver spiller får sit
   eget loot, så I aldrig skændes om det.
 - **Champions** (fjender med blåt skær), potions og "sealed crates", man kan gamble på.
+- **Ting man kan smadre, ligesom i Diablo:** tønder, kasser, krukker, knoglebunker og
+  sarkofager ligger overalt og giver guld, potions og items. Gyldne skattekister giver
+  det bedste loot, og nogle sarkofager er ikke tomme…
 - Party-rammer, chat, minimap, verdenskort, lyd og musik.
 
 ---

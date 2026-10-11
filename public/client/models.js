@@ -369,6 +369,49 @@ function throne(o) {
   return g;
 }
 
+// ---------------------------------------------------------------- breakables
+const PROP_GEO = () => ({
+  barrel: merge([part(new THREE.CylinderGeometry(0.42, 0.42, 1.0, 10), '#7a5230', T(0, 0.5, 0, 0, 0, 0, 1, 1, 1)), part(new THREE.CylinderGeometry(0.47, 0.47, 0.18, 10), '#8a6a3a', T(0, 0.5, 0)), part(new THREE.CylinderGeometry(0.44, 0.44, 0.08, 10), '#3a3430', T(0, 0.18, 0)), part(new THREE.CylinderGeometry(0.44, 0.44, 0.08, 10), '#3a3430', T(0, 0.82, 0)), part(new THREE.CylinderGeometry(0.38, 0.38, 0.04, 10), '#5a3a20', T(0, 1.01, 0))]),
+  crate: merge([part(new THREE.BoxGeometry(0.9, 0.85, 0.9), '#9a7848', T(0, 0.43, 0)), part(new THREE.BoxGeometry(0.96, 0.12, 0.96), '#6a4a28', T(0, 0.82, 0)), part(new THREE.BoxGeometry(0.96, 0.12, 0.96), '#6a4a28', T(0, 0.06, 0)), part(new THREE.BoxGeometry(0.1, 0.85, 0.96), '#6a4a28', T(0, 0.43, 0, 0, 0, 0.75)), part(new THREE.BoxGeometry(0.96, 0.85, 0.1), '#6a4a28', T(0, 0.43, 0, 0, 0, 0)) ]),
+  urn: merge([part(new THREE.SphereGeometry(0.38, 9, 6), '#a8643a', T(0, 0.45, 0, 0, 0, 0, 1, 1.15, 1)), part(new THREE.CylinderGeometry(0.17, 0.22, 0.28, 9), '#a8643a', T(0, 0.92, 0)), part(new THREE.CylinderGeometry(0.24, 0.17, 0.08, 9), '#8a4a2a', T(0, 1.08, 0)), part(new THREE.CylinderGeometry(0.39, 0.39, 0.09, 9), '#d8b878', T(0, 0.5, 0)), part(new THREE.CylinderGeometry(0.2, 0.24, 0.1, 9), '#6a3a1a', T(0, 0.05, 0))]),
+  bones: merge([part(new THREE.IcosahedronGeometry(0.55, 0), '#cfc6ae', T(0, 0.15, 0, 0, 0, 0, 1.3, 0.45, 1.1)), part(new THREE.IcosahedronGeometry(0.18, 1), '#e8e0cc', T(0.15, 0.48, 0.1)), part(new THREE.BoxGeometry(0.1, 0.08, 0.06), '#1a1410', T(0.1, 0.5, 0.26)), part(new THREE.BoxGeometry(0.1, 0.08, 0.06), '#1a1410', T(0.24, 0.5, 0.24)), part(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 4), '#ddd4bc', T(-0.2, 0.35, -0.1, 0.3, 0, 1.2)), part(new THREE.CylinderGeometry(0.05, 0.05, 0.8, 4), '#ddd4bc', T(0.2, 0.3, -0.3, -0.4, 0.6, 1.4)), part(new THREE.CylinderGeometry(0.04, 0.04, 0.7, 4), '#ddd4bc', T(-0.35, 0.25, 0.3, 0.2, -0.8, 1.5))]),
+  sarc: merge([part(new THREE.BoxGeometry(0.95, 0.7, 2.1), '#7a7482', T(0, 0.35, 0)), part(new THREE.BoxGeometry(1.05, 0.18, 2.2), '#8e8898', T(0, 0.78, 0)), part(new THREE.BoxGeometry(0.5, 0.12, 1.5), '#a8a2b0', T(0, 0.92, 0)), part(new THREE.IcosahedronGeometry(0.2, 1), '#a8a2b0', T(0, 0.98, 0.75)), part(new THREE.BoxGeometry(1.1, 0.12, 2.25), '#4a4652', T(0, 0.06, 0))]),
+  trove: merge([part(new THREE.BoxGeometry(1.2, 0.65, 0.8), '#5a3416', T(0, 0.33, 0)), part(new THREE.CylinderGeometry(0.4, 0.4, 1.2, 8, 1, false, 0, Math.PI), '#6a3e1c', T(0, 0.65, 0, 0, 0, Math.PI / 2)), part(new THREE.BoxGeometry(1.26, 0.1, 0.86), '#e8b830', T(0, 0.63, 0)), part(new THREE.BoxGeometry(0.1, 0.72, 0.86), '#e8b830', T(-0.42, 0.38, 0)), part(new THREE.BoxGeometry(0.1, 0.72, 0.86), '#e8b830', T(0.42, 0.38, 0)), part(new THREE.BoxGeometry(0.22, 0.26, 0.06), '#ffe080', T(0, 0.58, 0.42)), part(new THREE.CylinderGeometry(0.4, 0.4, 0.09, 8, 1, false, 0, Math.PI), '#e8b830', T(0, 0.65, 0, 0, 0, Math.PI / 2, 1, 1, 1))]),
+});
+// One instanced mesh per kind; a broken prop is hidden by scaling its instance to zero.
+export function buildProps(scene, props) {
+  const geo = PROP_GEO(); const byKind = {}; const handles = [];
+  for (const pr of props) (byKind[pr.k] = byKind[pr.k] || []).push(pr);
+  const d3 = new THREE.Object3D(), col = new THREE.Color();
+  for (const k in byKind) {
+    const list = byKind[k];
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: k === 'trove' ? 0x2a1a00 : 0x000000 });
+    const im = new THREE.InstancedMesh(geo[k], mat, list.length);
+    im.castShadow = true; im.receiveShadow = true;
+    const mats = [];
+    list.forEach((pr, i) => {
+      d3.position.set(pr.x, 0, pr.z); d3.rotation.set(0, pr.rot, 0);
+      const s = k === 'trove' ? 1.05 : 0.9 + (pr.rot % 1) * 0.25; d3.scale.set(s, s, s); d3.updateMatrix();
+      const m = d3.matrix.clone(); mats.push(m); im.setMatrixAt(i, m);
+      const v = 0.85 + ((pr.rot * 7) % 1) * 0.3;
+      if (pr.zone === 'frost') col.setRGB(v * 1.05, v * 1.1, v * 1.2); else if (pr.zone === 'ember') col.setRGB(v * 0.8, v * 0.65, v * 0.6); else if (pr.zone === 'spire') col.setRGB(v * 0.85, v * 0.75, v * 1.05); else col.setRGB(v, v, v);
+      im.setColorAt(i, col);
+      handles[pr.id] = { im, i, m };
+    });
+    im.computeBoundingSphere();
+    scene.add(im);
+    if (k === 'trove') for (const pr of list) { const gl = glowSprite(0xffc040, 1.6, 0.35); gl.position.set(pr.x, 0.8, pr.z); scene.add(gl); handles[pr.id].glow = gl; }
+  }
+  const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  return {
+    setBroken(id, broken) {
+      const h = handles[id]; if (!h || h.broken === broken) return;
+      h.broken = broken; h.im.setMatrixAt(h.i, broken ? zero : h.m); h.im.instanceMatrix.needsUpdate = true;
+      if (h.glow) h.glow.visible = !broken;
+    },
+  };
+}
+
 // ---------------------------------------------------------------- characters
 // A rig is { root, body, legs[], arms[], armR, armL, head, weapon, mats[], h, kind }
 function biped(o) {

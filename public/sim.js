@@ -368,6 +368,23 @@ export function npcMarker(pq, lvl, giver = 'maren') {
   return m;
 }
 
+// ---------------------------------------------------------------- breakables
+// Barrels, urns and the like lie all over the realm. Smash them for gold, potions and the odd item.
+export const PROPS = {
+  barrel: { name: 'Barrel', r: 0.55, respawn: 240 },
+  crate:  { name: 'Crate', r: 0.55, respawn: 240 },
+  urn:    { name: 'Urn', r: 0.45, respawn: 240 },
+  bones:  { name: 'Pile of bones', r: 0.7, respawn: 240 },
+  sarc:   { name: 'Sarcophagus', r: 0.9, respawn: 360 },
+  trove:  { name: 'Treasure chest', r: 0.75, respawn: 600 },
+};
+export const PROP_KINDS = Object.keys(PROPS);
+const ZONE_PROPS = {
+  meadow: ['barrel', 'crate', 'crate'], thorn: ['crate', 'barrel', 'urn'], grave: ['urn', 'bones', 'sarc'], crypt: ['urn', 'bones', 'sarc', 'bones'],
+  frost: ['crate', 'barrel', 'bones'], ember: ['urn', 'barrel', 'bones'], mire: ['barrel', 'crate', 'urn'], spire: ['urn', 'bones', 'sarc'],
+};
+const AMBUSH = { grave: 'skeleton', crypt: 'ghoul', spire: 'shade', frost: 'wraith', ember: 'imp', mire: 'drowned', meadow: 'wolf', thorn: 'goblin' };
+
 // ---------------------------------------------------------------- shops
 export const SHOP_PRICES = { potion: POTION_COST, bag: 800, stashup: 1200, fury: 250, stone: 250, mystic: 2500 };
 export const SHOPS = {
@@ -440,6 +457,7 @@ export class World {
     this.seed = seed;
     this.obs = [];      // colliding + decorative objects that both sides know about
     this.camps = [];
+    this.props = [];    // breakables: no collision, the game tracks which are broken
     this.grid = new Grid(8);
     this._tmp = [];
     this.generate();
@@ -610,6 +628,49 @@ export class World {
       const s = rr(3.5, 7);
       this.addObs({ k: 'cliff', x: Math.cos(a) * rad, z: Math.sin(a) * rad, r: s, s, rot: R() * 6, c: false });
     }
+    this.generateProps(R, nearTown, nearArena);
+  }
+  generateProps(R, nearTown, nearArena) {
+    const rr = (a, b) => a + R() * (b - a);
+    const ok = (x, z, r) => {
+      const zn = zoneAt(x, z);
+      if (!ZONE_PROPS[zn] || nearTown(x, z, 2) || nearArena(x, z, 1)) return null;
+      if (Math.hypot(x, z) > WORLD_R - 6) return null;
+      if (!this.free(x, z, r, 0.3)) return null;
+      if (this.props.some((o) => d2(o.x, o.z, x, z) < (r + PROPS[o.k].r + 0.3) ** 2)) return null;
+      return zn;
+    };
+    const add = (k, x, z) => {
+      const zn = ok(x, z, PROPS[k].r); if (!zn) return false;
+      this.props.push({ id: this.props.length, k, x, z, zone: zn, lvl: zoneLevel(x, z), rot: R() * Math.PI * 2 });
+      return true;
+    };
+    // a few around every camp, and a guarded treasure chest in some of them
+    for (const c of this.camps) {
+      const kinds = ZONE_PROPS[c.zone]; if (!kinds) continue;
+      const n = c.boss ? 0 : 2 + Math.floor(R() * 3);
+      for (let i = 0; i < n; i++) { const a = R() * Math.PI * 2, d = rr(4.5, 7.5); add(kinds[Math.floor(R() * kinds.length)], c.x + Math.cos(a) * d, c.z + Math.sin(a) * d); }
+      if (!c.boss && R() < 0.3) { const a = R() * Math.PI * 2; add('trove', c.x + Math.cos(a) * 2, c.z + Math.sin(a) * 2); }
+    }
+    // little piles along the roadsides
+    for (let i = 0; i < 260; i++) {
+      const a = R() * Math.PI * 2, rad = rr(TOWN_R + 6, WORLD_R - 10);
+      const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+      const zn = zoneAt(x, z); const kinds = ZONE_PROPS[zn]; if (!kinds) continue;
+      const rd = roadDist(x, z);
+      if (rd < 4 || rd > 7) continue;
+      const n = 1 + Math.floor(R() * 3), k = kinds[Math.floor(R() * kinds.length)];
+      for (let j = 0; j < n; j++) add(k === 'sarc' ? 'urn' : k, x + rr(-1.4, 1.4), z + rr(-1.4, 1.4));
+    }
+    // and scattered through the wilds
+    for (let i = 0; i < 520; i++) {
+      // the outer lands are bigger, so they get more of the tries
+      const a = R() * Math.PI * 2, rad = R() < 0.4 ? rr(TOWN_R + 8, INNER_R - 6) : rr(INNER_R + 8, WORLD_R - 8);
+      const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+      const zn = zoneAt(x, z); const kinds = ZONE_PROPS[zn]; if (!kinds) continue;
+      if (roadDist(x, z) < 4) continue;
+      add(R() < 0.035 ? 'trove' : kinds[Math.floor(R() * kinds.length)], x, z);
+    }
   }
   // Push a circle of radius rad out of every obstacle. Returns [x, z].
   resolve(x, z, rad) {
@@ -720,6 +781,8 @@ export class Game {
     this.projs = [];
     this.loot = new Map();
     this.stock = {};
+    this.broken = new Map(); // prop id -> time it comes back
+    this.propsDirty = false;
     this.timers = [];
     this.events = [];
     this.rosterDirty = true;
@@ -761,6 +824,7 @@ export class Game {
     this.players.set(p.id, p);
     this.rosterDirty = true;
     this.to(p.id, { t: 'welcome', id: p.id, seed: this.seed, name: p.name, cls, x: p.x, z: p.z });
+    this.to(p.id, { t: 'props', b: [...this.broken.keys()] });
     this.sendInv(p);
     this.sys(`${p.name} the ${CLASSES[cls].name} has entered Duskhold.`);
     return p.id;
@@ -798,6 +862,7 @@ export class Game {
       case 'shop': { if (SHOPS[m.n] && this.nearNpc(p, m.n)) this.to(p.id, this.shopFor(p, m.n)); return; }
       case 'stash': return this.stashMove(p, m.a, num(m.i, -1) | 0);
       case 'travel': return this.travel(p, m.to);
+      case 'smash': return this.smashProp(p, num(m.id, -1) | 0);
       case 'quest': return this.questAction(p, m.a, m.q);
       case 'chat': {
         const text = String(m.m || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 160);
@@ -875,6 +940,56 @@ export class Game {
     p.inv[i] = null; p.gold += gold;
     this.to(p.id, { t: 'sold', g: gold, n: it.name, r: it.r, d: discard ? 1 : 0 });
     this.sendInv(p);
+  }
+  // ---------- breakables
+  smashProp(p, id, fromHit = false) {
+    const pr = this.world.props[id];
+    if (!pr || !p.alive || this.broken.has(id)) return;
+    if (!fromHit && d2(p.x, p.z, pr.x, pr.z) > 3.4 * 3.4) return;
+    const def = PROPS[pr.k];
+    this.broken.set(id, this.now + def.respawn * rnd(0.85, 1.15));
+    this.propsDirty = true;
+    this.ev(pr.x, pr.z, { e: 'fx', k: 'smash', x: r2(pr.x), z: r2(pr.z), pk: pr.k, i: id });
+    const lvl = clamp(Math.min(pr.lvl, p.lvl + 2), 1, MAX_LEVEL);
+    const gold = (mult) => Math.max(1, Math.round(lvl * rnd(1.5, 4) * mult));
+    const item = (r) => this.addLoot(p, pr.x, pr.z, { item: makeItem(lvl, r, null, p.cls) });
+    if (pr.k === 'trove') {
+      item(Math.random() < 0.08 ? 4 : Math.random() < 0.3 ? 3 : 2);
+      if (Math.random() < 0.5) item(rollRarity(1));
+      this.addLoot(p, pr.x, pr.z, { gold: gold(12) });
+      if (Math.random() < 0.6) this.addLoot(p, pr.x, pr.z, { pot: 1 });
+      return;
+    }
+    const big = pr.k === 'sarc';
+    if (Math.random() < (big ? 0.9 : 0.55)) this.addLoot(p, pr.x, pr.z, { gold: gold(big ? 3 : 1) });
+    if (Math.random() < (big ? 0.2 : 0.1)) this.addLoot(p, pr.x, pr.z, { pot: 1 });
+    if (Math.random() < (big ? 0.45 : 0.12)) item(rollRarity());
+    // some coffins and bone piles were not empty
+    if ((big && Math.random() < 0.35) || (pr.k === 'bones' && Math.random() < 0.12)) {
+      const type = AMBUSH[pr.zone] || 'skeleton';
+      const n = big ? 2 : 1;
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const [x, z] = this.world.resolve(pr.x + Math.cos(a) * 1.6, pr.z + Math.sin(a) * 1.6, 0.6);
+        const m = this.spawnMonster(type, pr.lvl, x, z, null, true); m.ambush = true;
+        this.aggro(m, p, false);
+      }
+      this.ev(pr.x, pr.z, { e: 'fx', k: 'summon', x: r2(pr.x), z: r2(pr.z) });
+      this.note(p, 'Something was waiting inside!', 'warn');
+    }
+  }
+  // attacks and spells also smash what they hit
+  smashIn(p, x, z, r, ang = null, arc = 0) {
+    const props = this.world.props;
+    for (let i = 0; i < props.length; i++) {
+      const pr = props[i];
+      if (Math.abs(pr.x - x) > r + 1 || Math.abs(pr.z - z) > r + 1 || this.broken.has(i)) continue;
+      const dx = pr.x - x, dz = pr.z - z, dd = Math.hypot(dx, dz);
+      if (dd > r + PROPS[pr.k].r) continue;
+      if (ang !== null && dd > 1 && Math.abs(angDiff(Math.atan2(dx, dz), ang)) > arc / 2) continue;
+      if (pr.k === 'trove') continue; // chests are opened by hand
+      this.smashProp(p, i, true);
+    }
   }
   stockOf(npcId) {
     const def = SHOPS[npcId].stock; if (!def) return null;
@@ -1081,7 +1196,7 @@ export class Game {
       let xp = 12 * m.lvl * m.def.xp * (m.champion ? 3 : 1);
       const diff = p.lvl - m.lvl;
       if (diff >= 4) xp *= 0.15; else if (diff === 3) xp *= 0.45; else if (diff === 2) xp *= 0.8; else if (diff < 0) xp *= Math.min(1.4, 1 + 0.1 * -diff);
-      if (m.minion) xp *= 0.3;
+      if (m.minion && !m.ambush) xp *= 0.3;
       this.giveXp(p, xp);
       this.to(p.id, { t: 'xp', v: Math.round(xp), i: m.id });
       for (const qid in p.q.a) {
@@ -1093,7 +1208,7 @@ export class Game {
           p.invDirty = true;
         }
       }
-      if (!m.minion) this.dropLoot(m, p);
+      if (!m.minion || m.ambush) this.dropLoot(m, p);
     }
     if (m.def.boss) {
       this.sys(`${m.name} has fallen!`);
@@ -1311,6 +1426,7 @@ export class Game {
           if (dd > 1 && Math.abs(angDiff(Math.atan2(dx, dz), ang)) > ab.arc / 2) continue;
           this.hurtMonster(mo, p, ab.mult); hits++;
         }
+        this.smashIn(p, p.x, p.z, ab.range, ang, Math.min(ab.arc, Math.PI * 2));
         if (hits && slot === 0 && ab.gain) p.res = Math.min(p.st.mres, p.res + ab.gain);
         if (hits && slot === 1) p.res = Math.min(p.st.mres, p.res + 4);
         break;
@@ -1332,6 +1448,7 @@ export class Game {
         this.after(t, () => {
           this.ev(tx, tz, { e: 'fx', k: 'stomp', x: tx, z: tz, r: ab.r });
           for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, tx, tz) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult, { stun: ab.stun });
+          this.smashIn(p, tx, tz, ab.r);
         });
         break;
       }
@@ -1346,6 +1463,7 @@ export class Game {
       case 'nova': {
         this.ev(p.x, p.z, { e: 'fx', k: 'nova', x: p.x, z: p.z, r: ab.r });
         for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, p.x, p.z) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult, { freeze: mo.def.boss ? 0.8 : ab.freeze });
+        this.smashIn(p, p.x, p.z, ab.r);
         break;
       }
       case 'buff': {
@@ -1369,12 +1487,14 @@ export class Game {
           this.after(ab.delay, () => {
             this.ev(tx, tz, { e: 'fx', k: 'boom', x: tx, z: tz, r: ab.r });
             for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, tx, tz) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult);
+            if (this.players.has(p.id)) this.smashIn(p, tx, tz, ab.r);
           });
         } else {
           this.ev(tx, tz, { e: 'tg', x: tx, z: tz, r: ab.r, d: ab.waves * ab.every + 0.2, k: 'rain' });
           for (let w = 0; w < ab.waves; w++) this.after(0.25 + w * ab.every, () => {
             this.ev(tx, tz, { e: 'fx', k: 'rainwave', x: tx, z: tz, r: ab.r });
             for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, tx, tz) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult);
+            if (this.players.has(p.id)) this.smashIn(p, tx, tz, ab.r);
           });
         }
         break;
@@ -1392,6 +1512,7 @@ export class Game {
     this.ev(x, z, { e: 'fx', k: 'fireboom', x, z, r: pr.aoe });
     if (!p) return;
     for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, x, z) < (pr.aoe + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, pr.mult);
+    this.smashIn(p, x, z, pr.aoe);
   }
   updateProjs(dt) {
     const keep = [];
@@ -1467,6 +1588,7 @@ export class Game {
         p.whirlNext = now + 0.25;
         const ab = CLASSES.warrior.ab[3];
         for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, p.x, p.z) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult);
+        this.smashIn(p, p.x, p.z, ab.r);
       }
       // gold & potions pick themselves up
       for (const l of this.loot.values()) {
@@ -1492,6 +1614,12 @@ export class Game {
     }
     if (this.tickN % 20 === 0) this.monsters = this.monsters.filter((m) => !(m.minion && m.dead && now - m.deadAt > 3));
     this.updateProjs(dt);
+    if (this.tickN % 20 === 0) for (const [id, until] of this.broken) {
+      if (until > now) continue;
+      const pr = this.world.props[id];
+      let seen = false; for (const p of this.players.values()) if (d2(p.x, p.z, pr.x, pr.z) < 30 * 30) { seen = true; break; }
+      if (!seen) { this.broken.delete(id); this.propsDirty = true; }
+    }
     if (this.tickN % 20 === 0) for (const [id, l] of this.loot) if (l.until < now) { this.loot.delete(id); const p = this.players.get(l.o); if (p) p.lootDirty = true; }
     this.broadcast();
     if (this.tickN % 600 === 0) for (const p of this.players.values()) this.persist(p.id, this.saveOf(p));
@@ -1502,6 +1630,11 @@ export class Game {
       this.rosterDirty = false;
       const l = [...this.players.values()].map((p) => ({ i: p.id, n: p.name, c: p.cls, v: p.lvl }));
       for (const p of this.players.values()) this.to(p.id, { t: 'ro', l });
+    }
+    if (this.propsDirty) {
+      this.propsDirty = false;
+      const b = [...this.broken.keys()];
+      for (const p of this.players.values()) this.to(p.id, { t: 'props', b });
     }
     const pl = [];
     for (const p of this.players.values()) {
