@@ -937,6 +937,7 @@ export class Game {
     this.loot = new Map();
     this.stock = {};
     this.broken = new Map(); // prop id -> time it comes back
+    this.portals = new Map(); this.portalsDirty = false;
     this.propsDirty = false;
     this.timers = [];
     this.events = [];
@@ -980,6 +981,7 @@ export class Game {
     this.rosterDirty = true;
     this.to(p.id, { t: 'welcome', id: p.id, seed: this.seed, name: p.name, cls, x: p.x, z: p.z });
     this.to(p.id, { t: 'props', b: [...this.broken.keys()] });
+    this.portalsDirty = true;
     this.sendInv(p);
     this.sys(`${p.name} the ${CLASSES[cls].name} has entered Duskhold.`);
     return p.id;
@@ -988,6 +990,7 @@ export class Game {
     const p = this.players.get(pid); if (!p) return;
     this.persist(pid, this.saveOf(p));
     this.players.delete(pid);
+    for (const [id, pt] of this.portals) if (pt.owner === pid) { this.portals.delete(id); this.portalsDirty = true; }
     for (const [id, l] of this.loot) if (l.o === pid) this.loot.delete(id);
     for (const m of this.monsters) m.threat.delete(pid);
     this.rosterDirty = true;
@@ -1017,6 +1020,9 @@ export class Game {
       case 'shop': { if (SHOPS[m.n] && this.nearNpc(p, m.n)) this.to(p.id, this.shopFor(p, m.n)); return; }
       case 'stash': return this.stashMove(p, m.a, num(m.i, -1) | 0);
       case 'travel': return this.travel(p, m.to);
+      case 'drop': return this.dropItem(p, num(m.i, -1) | 0);
+      case 'portal': return this.startPortal(p);
+      case 'useportal': return this.usePortal(p, num(m.id, -1) | 0);
       case 'smash': return this.smashProp(p, num(m.id, -1) | 0);
       case 'enter': return this.enterDungeon(p, num(m.d, -1) | 0);
       case 'leave': return this.leaveDungeon(p);
@@ -1062,7 +1068,7 @@ export class Game {
   freeSlot(p) { return p.inv.indexOf(null); }
   pickUp(p, id) {
     const l = this.loot.get(num(id, -1));
-    if (!l || l.o !== p.id || !p.alive) return;
+    if (!l || (l.o !== p.id && !l.pub) || !p.alive) return;
     if (d2(p.x, p.z, l.x, l.z) > 4 * 4) return;
     if (l.item) {
       const i = this.freeSlot(p);
@@ -1072,6 +1078,50 @@ export class Game {
       this.sendInv(p);
     }
     this.loot.delete(l.id); p.lootDirty = true;
+    if (l.pub) for (const o of this.players.values()) o.lootDirty = true;
+  }
+  // Drop an item on the ground. Anyone can pick it up, so this is also how you give things to friends.
+  dropItem(p, i) {
+    const it = p.inv[i]; if (!it || !p.alive) return;
+    p.inv[i] = null;
+    const a = Math.random() * Math.PI * 2;
+    const [x, z] = this.world.resolve(p.x + Math.cos(a) * 1.2, p.z + Math.sin(a) * 1.2, 0.3);
+    this.loot.set(this.nextId, { id: this.nextId++, o: 0, pub: 1, x, z, until: this.now + 300, item: it });
+    for (const o of this.players.values()) o.lootDirty = true;
+    this.to(p.id, { t: 'dropped', n: it.name });
+    this.sendInv(p);
+  }
+  // ---------- town portals
+  startPortal(p) {
+    if (!p.alive) return;
+    if (isSafe(p.zone)) return this.note(p, 'You are already in a town.', 'warn');
+    p.portalCast = { at: this.now + 1.5, x: p.x, z: p.z };
+    this.ev(p.x, p.z, { e: 'fx', k: 'portalcast', i: p.id, x: p.x, z: p.z });
+  }
+  openPortal(p) {
+    for (const [id, pt] of this.portals) if (pt.owner === p.id) this.portals.delete(id);
+    const town = TOWN_BY_ID[p.home] || TOWNS[0];
+    const ws = this.world.obs.find((o) => o.k === 'waystone' && o.town === town.id);
+    const slot = this.portalSlot = ((this.portalSlot || 0) + 1) % 5;
+    const [tx, tz] = this.world.resolve(ws.x + (slot - 2) * 2.4, ws.z + 5.2, 0.8);
+    const pt = { id: this.nextId++, owner: p.id, name: p.name, town: town.id, x: p.x, z: p.z, tx, tz, until: this.now + 600 };
+    this.portals.set(pt.id, pt); this.portalsDirty = true;
+    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+    this.jump(p, tx, tz + 1.8);
+  }
+  jump(p, x, z) {
+    [p.x, p.z] = this.world.resolve(x, z, PLAYER_R);
+    p.grace = 9999; p.graceUntil = this.now + 1.5;
+    this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1 });
+    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+  }
+  usePortal(p, id) {
+    const pt = this.portals.get(id); if (!pt || !p.alive) return;
+    if (d2(p.x, p.z, pt.tx, pt.tz) < 3.5 * 3.5) {
+      // back to where the portal was opened; the owner's trip back closes it
+      this.jump(p, pt.x, pt.z + 0.5);
+      if (pt.owner === p.id) { this.portals.delete(id); this.portalsDirty = true; }
+    } else if (d2(p.x, p.z, pt.x, pt.z) < 3.5 * 3.5) this.jump(p, pt.tx, pt.tz + 1.8);
   }
   equip(p, i) {
     const it = p.inv[i]; if (!it) return;
@@ -1747,6 +1797,11 @@ export class Game {
         if (!p.wp.includes(p.zone)) { p.wp.push(p.zone); this.to(p.id, { t: 'wp', town: p.zone }); p.invDirty = true; }
         if (p.home !== p.zone) { p.home = p.zone; p.invDirty = true; }
       }
+      if (p.portalCast && (now >= p.portalCast.at || !p.alive)) {
+        const c = p.portalCast; p.portalCast = null;
+        if (!p.alive) { /* nothing */ } else if (d2(p.x, p.z, c.x, c.z) > 1.5 * 1.5) this.note(p, 'The portal fizzled. Stand still while it opens.', 'warn');
+        else this.openPortal(p);
+      }
       if (!p.alive) {
         if (now - p.deadAt >= 5) {
           p.alive = true; p.hp = p.st.mhp; p.res = p.cls === 'warrior' ? 0 : p.st.mres;
@@ -1802,7 +1857,8 @@ export class Game {
       let seen = false; for (const p of this.players.values()) if (d2(p.x, p.z, pr.x, pr.z) < 30 * 30) { seen = true; break; }
       if (!seen) { this.broken.delete(id); this.propsDirty = true; }
     }
-    if (this.tickN % 20 === 0) for (const [id, l] of this.loot) if (l.until < now) { this.loot.delete(id); const p = this.players.get(l.o); if (p) p.lootDirty = true; }
+    if (this.tickN % 20 === 0) for (const [id, l] of this.loot) if (l.until < now) { this.loot.delete(id); const p = this.players.get(l.o); if (p) p.lootDirty = true; if (l.pub) for (const o of this.players.values()) o.lootDirty = true; }
+    if (this.tickN % 20 === 0) for (const [id, pt] of this.portals) if (pt.until < now) { this.portals.delete(id); this.portalsDirty = true; }
     this.broadcast();
     if (this.tickN % 600 === 0) for (const p of this.players.values()) this.persist(p.id, this.saveOf(p));
   }
@@ -1812,6 +1868,11 @@ export class Game {
       this.rosterDirty = false;
       const l = [...this.players.values()].map((p) => ({ i: p.id, n: p.name, c: p.cls, v: p.lvl }));
       for (const p of this.players.values()) this.to(p.id, { t: 'ro', l });
+    }
+    if (this.portalsDirty) {
+      this.portalsDirty = false;
+      const l = [...this.portals.values()].map((pt) => [pt.id, r2(pt.x), r2(pt.z), r2(pt.tx), r2(pt.tz), pt.name, pt.owner, pt.town]);
+      for (const p of this.players.values()) this.to(p.id, { t: 'portals', l });
     }
     if (this.propsDirty) {
       this.propsDirty = false;
@@ -1841,7 +1902,7 @@ export class Game {
       if (p.lootDirty || this.tickN % 10 === 0) {
         p.lootDirty = false;
         const L = [];
-        for (const l of this.loot.values()) if (l.o === p.id && d2(l.x, l.z, p.x, p.z) < VR2) L.push(l.item ? [l.id, r2(l.x), r2(l.z), l.item.r, l.item.name, l.item.slot] : [l.id, r2(l.x), r2(l.z), l.gold ? -1 : -2, l.gold || 0]);
+        for (const l of this.loot.values()) if ((l.o === p.id || l.pub) && d2(l.x, l.z, p.x, p.z) < VR2) L.push(l.item ? [l.id, r2(l.x), r2(l.z), l.item.r, l.item.name, l.item.slot] : [l.id, r2(l.x), r2(l.z), l.gold ? -1 : -2, l.gold || 0]);
         msg.l = L;
       }
       this.to(p.id, msg);

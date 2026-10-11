@@ -309,6 +309,8 @@ function onMessage(m) {
       return;
     }
     case 'drop': if (m.r >= 0) sfx.drop(m.r); return;
+    case 'dropped': sfx.click(); addChat(null, `You dropped ${m.n}. Anyone nearby can pick it up.`, 'sys'); return;
+    case 'portals': return syncPortals(m.l);
     case 'sold': sfx.gold(); addChat(null, `${m.d ? 'Discarded' : 'Sold'} ${m.n} for ${m.g} gold.`, 'sys'); return;
     case 'bought': sfx.potion(); return;
     case 'gold': { const me = S.me; ftext.add(me.x, 2.6, me.z, `+${m.v} gold`, 'gold', { dur: 1.2 }); sfx.gold(); return; }
@@ -476,6 +478,7 @@ function onFx(e, v) {
       sfx.smash(e.pk, v);
       return;
     }
+    case 'portalcast': rings.add(e.x, e.z, 2.5, 0.4, 1.5, 0x7ab8ff, 0.06, 0.4); parts.emit(e.x, 0.3, e.z, { n: 40, color: 0x7ab8ff, color2: 0xffffff, speed: 1.5, radius: 1.4, life: [0.8, 1.5], size: [0.15, 0.3], vy: 2.5 }); if (self) sfx.blink(); return;
     case 'travel': rings.add(e.x, e.z, 0.4, 3.5, 0.7, 0x7ad8ff); parts.emit(e.x, 0.4, e.z, { n: 50, color: 0x7ad8ff, color2: 0xffffff, speed: 0.8, radius: 0.9, life: [0.6, 1.2], size: [0.2, 0.4], vy: 6 }); return;
     case 'respawn': parts.emit(e.x, 0.3, e.z, { n: 50, color: 0x9ad0ff, color2: 0xffffff, speed: 0.8, radius: 0.8, life: [0.8, 1.4], size: [0.25, 0.4], vy: 5 }); return;
   }
@@ -604,8 +607,13 @@ function pickHover() {
   S.hoverNpc = null; S.hoverObj = null;
   if (!best) for (const n of S.npcs) { if (Math.abs(n.x - S.me.x) > 40 || Math.abs(n.z - S.me.z) > 40) continue; const s = project(n.x, 1.2, n.z); if (s && Math.hypot(s.x - mx, (s.y - my) * 0.7) < 42) S.hoverNpc = n; }
   if (!best && !S.hoverNpc) for (const o of S.objs) { if (Math.abs(o.x - S.me.x) > 40 || Math.abs(o.z - S.me.z) > 40) continue; const s = project(o.x, o.k === 'chest' ? 0.5 : 1.5, o.z); if (s && Math.hypot(s.x - mx, (s.y - my) * (o.k === 'chest' ? 1 : 0.6)) < 40) S.hoverObj = o; }
+  S.hoverPortal = null;
+  if (!best && !S.hoverNpc && !S.hoverObj) for (const pt of S.portals.values()) for (const [end, x, z] of [['a', pt.x, pt.z], ['b', pt.tx, pt.tz]]) {
+    if (Math.abs(x - S.me.x) > 40 || Math.abs(z - S.me.z) > 40) continue;
+    const sp = project(x, 1.5, z); if (sp && Math.hypot(sp.x - mx, (sp.y - my) * 0.6) < 45) S.hoverPortal = { pt, end };
+  }
   S.hoverProp = null;
-  if (!best && !S.hoverNpc && !S.hoverObj) {
+  if (!best && !S.hoverNpc && !S.hoverObj && !S.hoverPortal) {
     let pd = 30;
     for (const pr of world.props) {
       if (Math.abs(pr.x - S.me.x) > 32 || Math.abs(pr.z - S.me.z) > 32 || S.broken.has(pr.id)) continue;
@@ -614,7 +622,7 @@ function pickHover() {
       if (d < pd) { pd = d; S.hoverProp = pr; }
     }
   }
-  canvas.style.cursor = best ? 'crosshair' : S.hoverNpc || S.hoverObj || S.hoverProp ? 'pointer' : 'default';
+  canvas.style.cursor = best ? 'crosshair' : S.hoverNpc || S.hoverObj || S.hoverProp || S.hoverPortal ? 'pointer' : 'default';
 }
 const WINS = ['charwin', 'shopwin', 'questwin', 'logwin', 'helpwin', 'mapwin', 'stashwin', 'waywin'];
 function anyWindowOpen() { return WINS.some((id) => !$(id).hidden); }
@@ -634,8 +642,9 @@ canvas.addEventListener('pointerdown', (e) => {
   if (S.hoverMon) { S.attackTarget = S.hoverMon.id; S.path = null; S.npcTarget = null; S.lootTarget = null; S.propTarget = null; return; }
   if (S.hoverNpc) { goToNpc(S.hoverNpc); return; }
   if (S.hoverObj) { goToObj(S.hoverObj); return; }
+  if (S.hoverPortal) { goToPortal(S.hoverPortal.pt, S.hoverPortal.end); return; }
   if (S.hoverProp) { goToProp(S.hoverProp); return; }
-  S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; S.propTarget = null;
+  S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; S.propTarget = null; S.portalTarget = null;
   S.path = findPath(S.me.x, S.me.z, g.x, g.z);
   rings.add(g.x, g.z, 0.2, 0.9, 0.35, 0xffd27a, 0.06, 0.3);
 });
@@ -684,6 +693,7 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat && !['1', '2', '3', '4'].includes(k)) return;
   if (['1', '2', '3', '4'].includes(k)) { castSlot(Number(k)); return; }
   if (k === 'q') { drink(); return; }
+  if (k === 't') { openPortal(); return; }
   if (k === 'c' || k === 'i' || k === 'b') { toggle('charwin'); return; }
   if (k === 'l' || k === 'j') { toggle('logwin'); return; }
   if (k === 'm') { toggle('mapwin'); return; }
@@ -720,6 +730,48 @@ function castSlot(s, at) {
   const pe = S.players.get(S.id);
   if (pe) { pe.rot = ang; playCastVisual(pe, s, ang, 1); }
   if (ab.kind === 'whirl') { /* server flag drives the spin */ }
+}
+// ---------------- town portals
+S.portals = new Map();
+const portalLabel = (pt, townEnd) => townEnd ? `Portal back${pt.owner === S.id ? '' : ` · ${pt.name}`}` : `Portal to ${TOWN_BY_ID[pt.town]?.name || 'town'}${pt.owner === S.id ? '' : ` · ${pt.name}`}`;
+function portalMesh(x, z) {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.13, 8, 28), new THREE.MeshBasicMaterial({ color: 0x9ad8ff }));
+  ring.position.y = 1.55; g.add(ring);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1.08, 28), new THREE.MeshBasicMaterial({ color: 0x3a7aff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  disc.position.y = 1.55; g.add(disc);
+  const gl = glowSprite(0x7ab8ff, 4, 0.6); gl.position.y = 1.55; g.add(gl);
+  const base = groundRing(0x7ab8ff, 0.6); base.scale.setScalar(1.3); base.position.y = 0.05; g.add(base);
+  g.position.set(x, 0, z); scene.add(g);
+  return { g, disc, ring };
+}
+function syncPortals(list) {
+  const seen = new Set();
+  for (const [id, x, z, tx, tz, name, owner, town] of list) {
+    seen.add(id);
+    if (S.portals.has(id)) continue;
+    const pt = { id, x, z, tx, tz, name, owner, town };
+    pt.a = portalMesh(x, z); pt.b = portalMesh(tx, tz);
+    pt.la = makeLabel('obj'); pt.la.textContent = portalLabel(pt, false); pt.lb = makeLabel('obj'); pt.lb.textContent = portalLabel(pt, true);
+    for (const [lab, end] of [[pt.la, 'a'], [pt.lb, 'b']]) lab.onpointerdown = (ev) => { ev.stopPropagation(); if (ev.button === 0) goToPortal(pt, end); };
+    S.portals.set(id, pt);
+  }
+  for (const [id, pt] of S.portals) if (!seen.has(id)) { scene.remove(pt.a.g); scene.remove(pt.b.g); pt.la.remove(); pt.lb.remove(); S.portals.delete(id); if (S.portalTarget?.pt === pt) S.portalTarget = null; }
+}
+function openPortal() {
+  if (S.mode !== 'game' || S.me.dead) return;
+  if (ZONES[S.zone]?.safe) { toast('You are already in a town.', 'warn'); sfx.error(); return; }
+  S.path = null; S.attackTarget = null; S.npcTarget = null; S.objTarget = null; S.propTarget = null; S.lootTarget = null;
+  S.portalCastUntil = performance.now() + 1500;
+  send({ t: 'portal' });
+  toast('Opening a town portal… stand still.');
+}
+function goToPortal(pt, end) {
+  if (S.me.dead) return;
+  const x = end === 'a' ? pt.x : pt.tx, z = end === 'a' ? pt.z : pt.tz;
+  S.portalTarget = { pt, x, z }; S.attackTarget = null; S.npcTarget = null; S.objTarget = null; S.propTarget = null; S.lootTarget = null;
+  if (Math.hypot(x - S.me.x, z - S.me.z) < 2.8) { send({ t: 'useportal', id: pt.id }); S.portalTarget = null; S.path = null; }
+  else S.path = findPath(S.me.x, S.me.z, x, z);
 }
 function drink() {
   if (!S.inv || S.me.dead) return;
@@ -858,6 +910,7 @@ function openWin(id) {
 }
 function closeAll() { for (const id of WINS) $(id).hidden = true; hideTip(); }
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => { $(b.dataset.close).hidden = true; hideTip(); sfx.click(); }));
+$('b-portal').onclick = () => openPortal();
 $('b-char').onclick = () => toggle('charwin'); $('b-log').onclick = () => toggle('logwin'); $('b-map').onclick = () => toggle('mapwin'); $('b-help').onclick = () => toggle('helpwin');
 $('mmwrap').onclick = () => toggle('mapwin');
 
@@ -893,13 +946,14 @@ function renderChar() {
       else if (isUpgrade(it)) b.classList.add('up');
       b.setAttribute('aria-label', it.name);
       b.onclick = (ev) => onBagClick(i, it, ev);
+      b.oncontextmenu = (ev) => { ev.preventDefault(); hideTip(); send({ t: 'drop', i }); };
       b.onmouseenter = () => showItemTip(b, it, false);
       b.onmouseleave = hideTip;
     } else b.setAttribute('aria-label', 'Empty slot');
     bags.appendChild(b);
   });
   $('goldv').textContent = iv.gold;
-  $('baghint').textContent = !$('stashwin').hidden ? 'Click an item to put it in the chest' : shop ? 'Click an item to sell it' : 'Click: equip · Shift+click: discard';
+  $('baghint').textContent = !$('stashwin').hidden ? 'Click an item to put it in the chest' : shop ? 'Click an item to sell it' : 'Click: equip · Right-click: drop · Shift+click: scrap';
 }
 function onBagClick(i, it, ev) {
   hideTip();
@@ -939,7 +993,7 @@ function showItemTip(el, it, equipped, mode) {
     html += `<div class="cmp">${S.inv.eq[it.slot] ? `Compared with ${esc(S.inv.eq[it.slot].name)}:` : 'You have nothing equipped here:'}${lines || '<div>No change</div>'}</div>`;
   }
   const shop = !$('shopwin').hidden, stash = !$('stashwin').hidden;
-  html += `<div class="hint">${mode === 'buy' ? 'Buy it with the button on the right' : mode === 'take' ? 'Click to take it out of the chest' : equipped ? 'Click to take off' : stash ? 'Click to put it in your chest' : shop ? `Click to sell for ${it.v} gold` : `Click to equip · Shift+click to discard (${Math.max(1, Math.round(it.v * 0.2))} gold)`}</div>`;
+  html += `<div class="hint">${mode === 'buy' ? 'Buy it with the button on the right' : mode === 'take' ? 'Click to take it out of the chest' : equipped ? 'Click to take off' : stash ? 'Click to put it in your chest' : shop ? `Click to sell for ${it.v} gold` : `Click to equip · Shift+click to scrap it for ${Math.max(1, Math.round(it.v * 0.2))} gold`}${!equipped && !mode ? '<br>Right-click to drop it on the ground' : ''}</div>`;
   showTip(el, html);
 }
 function showTip(el, html) {
@@ -1397,9 +1451,9 @@ function frame() {
   if (!me.dead && !me.dash) {
     if (K.has('w') || K.has('arrowup')) mz -= 1; if (K.has('s') || K.has('arrowdown')) mz += 1;
     if (K.has('a') || K.has('arrowleft')) mx -= 1; if (K.has('d') || K.has('arrowright')) mx += 1;
-    if (mx || mz) { S.path = null; S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; S.propTarget = null; }
+    if (mx || mz) { S.path = null; S.attackTarget = null; S.npcTarget = null; S.lootTarget = null; S.objTarget = null; S.propTarget = null; S.portalTarget = null; }
     else {
-      if (S.mouse.down && performance.now() - S.mouse.downAt > 220 && !S.attackTarget && !S.mouse.shift && !S.npcTarget && !S.lootTarget && !S.objTarget && S.propTarget === null && !anyWindowOpen()) {
+      if (S.mouse.down && performance.now() - S.mouse.downAt > 220 && !S.attackTarget && !S.mouse.shift && !S.npcTarget && !S.lootTarget && !S.objTarget && S.propTarget === null && !S.portalTarget && !anyWindowOpen()) {
         const g = groundAt(S.mouse.x, S.mouse.y);
         if (Math.hypot(g.x - me.x, g.z - me.z) > 0.6) S.path = [g];
       }
@@ -1420,7 +1474,7 @@ function frame() {
       }
       if (S.path && S.path.length) {
         const wp = S.path[0]; const dx = wp.x - me.x, dz = wp.z - me.z, d = Math.hypot(dx, dz);
-        const stopAt = S.path.length === 1 ? (S.npcTarget ? 3.5 : S.objTarget ? 1.2 : S.propTarget !== null ? 1.8 : S.lootTarget ? 1.5 : 0.15) : 0.3;
+        const stopAt = S.path.length === 1 ? (S.portalTarget ? 1.2 : S.npcTarget ? 3.5 : S.objTarget ? 1.2 : S.propTarget !== null ? 1.8 : S.lootTarget ? 1.5 : 0.15) : 0.3;
         if (d < stopAt) S.path.shift(); else { mx = dx / d; mz = dz / d; }
         if (!S.path.length) S.path = null;
       }
@@ -1441,6 +1495,7 @@ function frame() {
   }
   // arrival checks
   if (S.npcTarget) { const n = S.npcs.find((q) => q.id === S.npcTarget); if (n && Math.hypot(n.x - me.x, n.z - me.z) < 4.2) { S.npcTarget = null; S.path = null; openNpc(n.id); } else if (!S.path) S.npcTarget = null; }
+  if (S.portalTarget) { const t = S.portalTarget; if (Math.hypot(t.x - me.x, t.z - me.z) < 2.8) { S.portalTarget = null; S.path = null; send({ t: 'useportal', id: t.pt.id }); } else if (!S.path) S.portalTarget = null; }
   if (S.propTarget !== null) { const pr = world.props[S.propTarget]; if (Math.hypot(pr.x - me.x, pr.z - me.z) < 2.6) { S.path = null; smashNow(pr); } else if (!S.path) S.propTarget = null; }
   if (S.objTarget) { const o = S.objTarget; if (Math.hypot(o.x - me.x, o.z - me.z) < (o.k === 'dentr' ? 4.2 : 3.5)) { S.objTarget = null; S.path = null; openObj(o); } else if (!S.path) S.objTarget = null; }
   if (S.lootTarget) { const l = S.loot.get(S.lootTarget); if (!l) S.lootTarget = null; else if (Math.hypot(l.x - me.x, l.z - me.z) < 2.5) { send({ t: 'pick', id: l.id }); S.lootTarget = null; S.path = null; } else if (!S.path) S.lootTarget = null; }
@@ -1549,6 +1604,11 @@ function frame() {
       b.g.traverse((x) => { if (x.isMesh) { x.material.opacity = b.fade; x.material.depthWrite = b.fade > 0.95; } });
     }
   }
+  for (const pt of S.portals.values()) for (const m of [pt.a, pt.b]) {
+    m.ring.rotation.z = t * 1.5; m.disc.material.opacity = 0.45 + 0.15 * Math.sin(t * 4);
+    m.g.rotation.y = Math.atan2(camera.position.x - m.g.position.x, camera.position.z - m.g.position.z);
+    if (Math.abs(m.g.position.x - me.x) < 40 && Math.abs(m.g.position.z - me.z) < 40 && Math.random() < 0.5) parts.emit(m.g.position.x + (Math.random() - 0.5) * 1.6, 0.3, m.g.position.z + (Math.random() - 0.5) * 0.6, { n: 1, color: 0x7ab8ff, color2: 0xe0f0ff, speed: 0.2, life: [0.8, 1.4], size: [0.1, 0.18], vy: 2 });
+  }
   if (WV.bossRing) WV.bossRing.material.opacity = 0.25 + 0.15 * Math.sin(t * 2);
   if (WV.bossRing2) { WV.bossRing2.material.opacity = 0.25 + 0.15 * Math.sin(t * 1.6); WV.bossRing2.rotation.z = t * 0.15; WV.bossRing3.rotation.z = -t * 0.25; }
   const r0 = performance.now();
@@ -1590,6 +1650,9 @@ function updateLabels(tgt) {
     }
   }
   for (const n of S.npcs) placeLabel(n.label, n.x, 2.45, n.z);
+  for (const pt of S.portals.values()) {
+    for (const [lab, x, z] of [[pt.la, pt.x, pt.z], [pt.lb, pt.tx, pt.tz]]) { if (Math.hypot(x - S.me.x, z - S.me.z) < 22) placeLabel(lab, x, 3.2, z); else lab.style.display = 'none'; }
+  }
   if (S.hoverProp) { propLabel.textContent = PROPS[S.hoverProp.k].name; placeLabel(propLabel, S.hoverProp.x, 1.5, S.hoverProp.z); } else propLabel.style.display = 'none';
   for (const o of S.objs) {
     const near = Math.hypot(o.x - S.me.x, o.z - S.me.z) < 18 || S.hoverObj === o;
