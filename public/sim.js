@@ -71,7 +71,7 @@ export const TOWNS = [
 export const TOWN_BY_ID = Object.fromEntries(TOWNS.map((t) => [t.id, t]));
 export const isSafe = (zone) => !!(ZONES[zone] && ZONES[zone].safe);
 export function zoneAt(x, z) {
-  if (x > 300) { const d = DUNGEONS[Math.floor((x - DNG_X0 + 17) / DNG_STEP)]; return d ? d.id : 'town'; }
+  if (x > 300) { const d = DLEVELS[Math.floor((x - DNG_X0 + 17) / DNG_STEP)]; return d ? d.id : 'town'; }
   for (const t of TOWNS) { const dx = x - t.x, dz = z - t.z; if (dx * dx + dz * dz < t.r * t.r) return t.id; }
   const r = Math.hypot(x, z);
   const q = Math.round(Math.atan2(z, x) / (Math.PI / 2));
@@ -104,19 +104,30 @@ export const BOSS_ARENA2 = { x: -200, z: 0, r: 15 };
 export const ARENAS = [BOSS_ARENA, BOSS_ARENA2];
 
 // ---------------------------------------------------------------- dungeons
-// Each dungeon is built far east of the realm (x > 400), out of sight. Stairs in the
-// realm take you down; the stairs in the first room take you back up.
+// Each dungeon floor is built far east of the realm (x > 400), out of sight. Stairs in the
+// realm take you down to the first floor; stairs lead on down to the lord on the last floor.
 export const DNG_X0 = 420, DNG_STEP = 130, DNG_Z0 = -48, DNG_CELL = 24, DNG_N = 4, DNG_TILE = 2, DNG_TILES = 48;
 export const DUNGEONS = [
-  { id: 'warren', name: 'Goblin Warren', zone: 'thorn', lv: [4, 6], mobs: ['goblin', 'shaman', 'spider'], boss: 'gobking', theme: 'earth', ang: 0.42, rad: 98 },
-  { id: 'catacombs', name: 'The Catacombs', zone: 'grave', lv: [7, 9], mobs: ['skeleton', 'archer', 'ghoul'], boss: 'bonelord', theme: 'bone', ang: Math.PI / 2 + 0.42, rad: 104 },
-  { id: 'depths', name: 'Frozen Depths', zone: 'frost', lv: [12, 14], mobs: ['frostwolf', 'yeti', 'wraith'], boss: 'icelord', theme: 'ice', ang: -Math.PI / 2 - 0.38, rad: 192 },
-  { id: 'molten', name: 'The Molten Deep', zone: 'ember', lv: [14, 16], mobs: ['imp', 'hound', 'brute'], boss: 'ashmaw', theme: 'lava', ang: 0.36, rad: 196 },
-  { id: 'temple', name: 'Sunken Temple', zone: 'mire', lv: [16, 18], mobs: ['drowned', 'lurker', 'horror'], boss: 'prophet', theme: 'moss', ang: Math.PI / 2 - 0.4, rad: 196 },
+  { id: 'warren', name: 'Goblin Warren', zone: 'thorn', floors: 2, lv: [4, 6], mobs: ['goblin', 'shaman', 'spider'], boss: 'gobking', theme: 'earth', ang: 0.42, rad: 98 },
+  { id: 'catacombs', name: 'The Catacombs', zone: 'grave', floors: 2, lv: [7, 9], mobs: ['skeleton', 'archer', 'ghoul'], boss: 'bonelord', theme: 'bone', ang: Math.PI / 2 + 0.42, rad: 104 },
+  { id: 'depths', name: 'Frozen Depths', zone: 'frost', floors: 3, lv: [12, 14], mobs: ['frostwolf', 'yeti', 'wraith'], boss: 'icelord', theme: 'ice', ang: -Math.PI / 2 - 0.38, rad: 192 },
+  { id: 'molten', name: 'The Molten Deep', zone: 'ember', floors: 3, lv: [14, 16], mobs: ['imp', 'hound', 'brute'], boss: 'ashmaw', theme: 'lava', ang: 0.36, rad: 196 },
+  { id: 'temple', name: 'Sunken Temple', zone: 'mire', floors: 3, lv: [16, 18], mobs: ['drowned', 'lurker', 'horror'], boss: 'prophet', theme: 'moss', ang: Math.PI / 2 - 0.4, rad: 196 },
 ];
-DUNGEONS.forEach((d, i) => { d.i = i; d.ox = DNG_X0 + i * DNG_STEP; d.oz = DNG_Z0; ZONES[d.id] = { name: d.name, lv: d.lv, dungeon: true, sub: 'Dungeon' }; });
+// every floor of every dungeon, one after another
+export const DLEVELS = [];
+DUNGEONS.forEach((d, i) => {
+  d.i = i; d.first = DLEVELS.length;
+  ZONES[d.id] = { name: d.name, lv: d.lv, dungeon: true, sub: 'Dungeon' };
+  const [a, b] = d.lv;
+  for (let f = 0; f < d.floors; f++) {
+    const k = DLEVELS.length;
+    DLEVELS.push({ ...d, i: k, di: i, f, last: f === d.floors - 1, ox: DNG_X0 + k * DNG_STEP, oz: DNG_Z0,
+      lv: [a + Math.floor((b - a) * f / d.floors), a + Math.round((b - a) * (f + 1) / d.floors)] });
+  }
+});
 export const DUNGEON_BY_ID = Object.fromEntries(DUNGEONS.map((d) => [d.id, d]));
-export const dungeonAt = (x) => (x > 300 ? DUNGEONS[Math.floor((x - DNG_X0 + 17) / DNG_STEP)] || null : null);
+export const dungeonAt = (x) => (x > 300 ? DLEVELS[Math.floor((x - DNG_X0 + 17) / DNG_STEP)] || null : null);
 
 // ---------------------------------------------------------------- data: classes
 export const CLASSES = {
@@ -154,7 +165,40 @@ export const CLASSES = {
     ],
   },
 };
-export const CLASS_LIST = ['warrior', 'mage', 'ranger'];
+CLASSES.paladin = {
+  name: 'Paladin', role: 'Melee · Healer', color: '#e8c25a', blurb: 'A holy knight with hammer and shield. Hits hard, stuns crowds and keeps the whole party alive with the light.',
+  hp: 135, hpL: 24, res: 'Faith', resMax: 100, resL: 0, resRegen: 10, speed: 6.3, basicCd: 0.75, threat: 1.5,
+  basic: { id: 'smite', name: 'Smite', kind: 'melee', range: 2.8, arc: 2.2, mult: 1.2, heal: 0.025, desc: 'Strike the enemies in front of you with your hammer. Each hit heals you a little.' },
+  ab: [
+    { id: 'hammer', name: 'Blessed Hammer', lvl: 1, cost: 18, cd: 2, kind: 'proj', proj: 'hammer', speed: 17, range: 15, mult: 1.75, aoe: 3.2, desc: 'Throw a glowing hammer that bursts with light where it hits.' },
+    { id: 'judgment', name: 'Judgment', lvl: 3, cost: 25, cd: 9, kind: 'nova', r: 6, mult: 1.1, stun: 1.6, fx: 'holy', desc: 'Holy light bursts from you, damaging and stunning nearby enemies for 1.6 sec.' },
+    { id: 'holylight', name: 'Holy Light', lvl: 5, cost: 30, cd: 14, kind: 'heal', r: 14, dur: 3, pct: 0.5, fx: 'holy', desc: 'You and nearby allies heal 50% of max health over 3 sec.' },
+    { id: 'divine', name: 'Divine Shield', lvl: 8, cost: 40, cd: 26, kind: 'barrier', r: 14, dur: 6, dr: 0.5, inv: 3, desc: 'You cannot be hurt for 3 sec, and nearby allies take 50% less damage for 6 sec.' },
+  ],
+};
+CLASSES.necro = {
+  name: 'Necromancer', role: 'Ranged · Summoner', color: '#6fd39a', blurb: 'Speaks with the dead, and the dead listen. Raises skeletons to fight for him and turns bone into armor.',
+  hp: 100, hpL: 17, res: 'Essence', resMax: 110, resL: 7, resRegen: 7, resRegenL: 0.5, speed: 6.1, basicCd: 0.85, threat: 1,
+  basic: { id: 'bonespear', name: 'Bone Spear', kind: 'proj', proj: 'bone', speed: 23, range: 20, mult: 1.0, desc: 'Hurl a shard of bone.' },
+  ab: [
+    { id: 'raise', name: 'Raise Skeleton', lvl: 1, cost: 25, cd: 3, kind: 'summon', pet: 'skelpet', n: 1, max: 3, desc: 'Raise a skeleton warrior that follows you and fights for you. Up to 3 at a time.' },
+    { id: 'corpse', name: 'Corpse Explosion', lvl: 3, cost: 22, cd: 5, kind: 'meteor', range: 18, r: 4.2, delay: 0.35, mult: 2.4, tg: 'bone', fx: 'bones', desc: 'Make the ground at the cursor burst with bone and gore.' },
+    { id: 'bonearmor', name: 'Bone Armor', lvl: 5, cost: 30, cd: 18, kind: 'barrier', r: 0, dur: 10, dr: 0.45, desc: 'Bones shield you, and you take 45% less damage for 10 sec.' },
+    { id: 'army', name: 'Army of the Dead', lvl: 8, cost: 50, cd: 30, kind: 'summon', pet: 'army', n: 4, life: 20, desc: 'Two skeleton warriors and two skeleton mages rise for 20 sec.' },
+  ],
+};
+CLASSES.assassin = {
+  name: 'Assassin', role: 'Melee · Burst', color: '#b06ae0', blurb: 'Fast, quiet and gone before the body hits the floor. Steps through shadows and fills the air with knives.',
+  hp: 115, hpL: 19, res: 'Energy', resMax: 100, resL: 0, resRegen: 15, speed: 7.0, basicCd: 0.55, threat: 1.2,
+  basic: { id: 'twin', name: 'Twin Strike', kind: 'melee', range: 2.5, arc: 1.9, mult: 0.85, desc: 'Strike twice with your blades.' },
+  ab: [
+    { id: 'fan', name: 'Fan of Knives', lvl: 1, cost: 25, cd: 2.5, kind: 'proj', proj: 'knife', speed: 26, range: 11, mult: 0.85, count: 9, spread: 5.6, desc: 'Throw knives in every direction.' },
+    { id: 'shadowstep', name: 'Shadow Step', lvl: 3, cost: 15, cd: 6, kind: 'charge', dist: 11, r: 2.6, mult: 1.9, stun: 0.6, fx: 'shadow', desc: 'Step through the shadows to the cursor and strike everything where you appear.' },
+    { id: 'smoke', name: 'Smoke Bomb', lvl: 5, cost: 25, cd: 14, kind: 'nova', r: 5.5, mult: 0.4, stun: 2.8, fx: 'smoke', inv: 1, desc: 'Enemies around you lose sight of you for 2.8 sec. Nothing can hit you for 1 sec.' },
+    { id: 'bladefury', name: 'Blade Fury', lvl: 8, cost: 40, cd: 11, kind: 'whirl', dur: 2.5, r: 3.4, every: 0.2, mult: 0.6, desc: 'Spin with your blades out for 2.5 sec, cutting everything around you.' },
+  ],
+};
+export const CLASS_LIST = ['warrior', 'mage', 'ranger', 'paladin', 'necro', 'assassin'];
 
 // ---------------------------------------------------------------- data: monsters
 export const MONSTERS = {
@@ -180,6 +224,9 @@ export const MONSTERS = {
   horror:     { name: 'Marsh Horror', short: 'Horror', hp: 150, dmg: 20, speed: 6, r: 1.1, range: 2.1, atkCd: 1.3, aggro: 9, xp: 1.9 },
   voidknight: { name: 'Void Knight', short: 'Knight', hp: 200, dmg: 24, speed: 5, r: 0.9, range: 2.2, atkCd: 1.5, aggro: 11, xp: 2.3 },
   shade:      { name: 'Shard Shade', short: 'Shade', hp: 90, dmg: 20, speed: 5.2, r: 0.6, range: 11, ranged: true, proj: 'void', pspeed: 18, atkCd: 2.0, aggro: 13, xp: 1.8 },
+  // the Necromancer's servants
+  skelpet:  { name: 'Risen Warrior', short: 'Warrior', hp: 70, dmg: 0, speed: 6.6, r: 0.6, range: 1.8, atkCd: 1.0, aggro: 0, xp: 0, pet: true, mult: 0.42 },
+  magepet:  { name: 'Risen Mage', short: 'Mage', hp: 45, dmg: 0, speed: 6.4, r: 0.6, range: 9, ranged: true, proj: 'bone', pspeed: 20, atkCd: 1.5, aggro: 0, xp: 0, pet: true, mult: 0.5 },
   // dungeon lords
   gobking:  { name: 'Gutrot, the Goblin King', short: 'Gutrot', hp: 5000, dmg: 28, speed: 5.2, r: 1.2, range: 2.6, atkCd: 1.5, aggro: 12, xp: 12, boss: true, mini: true, minions: ['goblin', 'shaman'], call: 'whistles for his warband' },
   bonelord: { name: 'The Bone Matron', short: 'Matron', hp: 10000, dmg: 50, speed: 4.8, r: 1.3, range: 2.8, atkCd: 1.6, aggro: 12, xp: 18, boss: true, mini: true, minions: ['skeleton', 'ghoul'], call: 'raises her children from the floor' },
@@ -190,7 +237,7 @@ export const MONSTERS = {
 };
 export const MONSTER_LIST = Object.keys(MONSTERS);
 const CHAMP_ADJ = ['Grim', 'Ashen', 'Dread', 'Feral', 'Gloom', 'Savage', 'Cursed', 'Rotting', 'Bloodsworn', 'Hollow'];
-export const PROJ_KINDS = ['bolt', 'fireball', 'arrow', 'fire', 'arrow_m', 'bone', 'frost', 'void'];
+export const PROJ_KINDS = ['bolt', 'fireball', 'arrow', 'fire', 'arrow_m', 'bone', 'frost', 'void', 'hammer', 'knife'];
 
 // ---------------------------------------------------------------- data: items
 export const SLOTS = ['weapon', 'helm', 'chest', 'gloves', 'boots', 'ring', 'amulet'];
@@ -203,6 +250,9 @@ const WEAPON_BASES = {
   warrior: ['Rusty Sword', 'Broadsword', 'War Axe', 'Greatsword', 'Headsman Axe', 'Frostbrand Blade', 'Magma Cleaver', 'Shardsteel Greatblade'],
   mage: ['Gnarled Staff', 'Oak Staff', 'Runed Staff', 'Crystal Staff', 'Ember Rod', 'Rimeglass Staff', 'Cinder Scepter', 'Voidshard Staff'],
   ranger: ['Short Bow', 'Hunting Bow', 'Recurve Bow', 'Longbow', 'Wyrmhorn Bow', 'Icehorn Bow', 'Ashwood Greatbow', 'Starshard Bow'],
+  paladin: ['Wooden Mallet', 'Iron Mace', 'Flanged Mace', 'Warhammer', 'Templar Hammer', 'Glacier Maul', 'Sunforged Hammer', 'Dawnshard Maul'],
+  necro: ['Bone Wand', 'Yew Wand', 'Grave Wand', 'Skull Rod', 'Lich Wand', 'Frostbone Wand', 'Pyre Wand', 'Shardbone Scepter'],
+  assassin: ['Rusty Knife', 'Stiletto', 'Twin Daggers', 'Kris', 'Shadow Claws', 'Rimefang Blades', 'Cinder Talons', 'Voidedge Daggers'],
 };
 const ARMOR_BASES = {
   helm: ['Leather Cap', 'Iron Helm', 'Horned Helm', 'Warden Helm', 'Frostforged Helm', 'Obsidian Visage', 'Shardcrown'],
@@ -227,7 +277,7 @@ const SUFFIX = { power: 'of Might', life: 'of the Bear', armor: 'of Warding', cr
 const RA = ['Grim', 'Dusk', 'Ash', 'Blood', 'Storm', 'Raven', 'Bone', 'Gloom', 'Night', 'Ember', 'Frost', 'Doom', 'Wraith', 'Iron', 'Shadow', 'Thorn'];
 const RB = ['fang', 'bite', 'song', 'ward', 'mark', 'heart', 'reaver', 'shroud', 'spire', 'grasp', 'call', 'veil', 'brand', 'howl', 'crest', 'coil'];
 const LEGENDARY = {
-  warrior: 'Dawnsplitter', mage: 'Embercall', ranger: 'Whisperwind',
+  warrior: 'Dawnsplitter', mage: 'Embercall', ranger: 'Whisperwind', paladin: 'Lightbringer', necro: 'Gravecaller', assassin: 'Nightwhisper',
   helm: 'Hollowcrown', chest: 'Duskforged Mantle', gloves: 'Gravegrip Gauntlets', boots: 'Mistrunner Boots',
   ring: 'Band of the Endless Night', amulet: 'Heart of Duskhold',
 };
@@ -256,7 +306,7 @@ export function makeItem(ilvl, rarity, slot, cls) {
     it.cls = cls;
     it.base = WEAPON_BASES[cls][clamp(tier + (rarity >= 3 ? 1 : 0), 0, 7)];
     const avg = (6 + 2.6 * ilvl) * RMULT[rarity] * rnd(0.9, 1.1);
-    const sp = cls === 'warrior' ? 0.32 : cls === 'mage' ? 0.2 : 0.25;
+    const sp = { warrior: 0.32, mage: 0.2, ranger: 0.25, paladin: 0.28, necro: 0.22, assassin: 0.18 }[cls] || 0.25;
     it.dmin = Math.max(1, Math.round(avg * (1 - sp)));
     it.dmax = Math.max(it.dmin + 1, Math.round(avg * (1 + sp)));
   } else {
@@ -497,7 +547,8 @@ export class World {
     this.obs = [];      // colliding + decorative objects that both sides know about
     this.camps = [];
     this.props = [];    // breakables: no collision, the game tracks which are broken
-    this.dungeons = [];
+    this.dungeons = [];   // one layout per dungeon floor (DLEVELS)
+    this.entrances = [];  // the stairs down in the realm, one per dungeon
     this.grid = new Grid(8);
     this._tmp = [];
     this.generate();
@@ -590,7 +641,7 @@ export class World {
     // --- dungeon entrances (stairs going down), placed before anything else can block them
     const nearTown = (x, z, gap) => TOWNS.some((t) => d2(x, z, t.x, t.z) < (t.r + gap) * (t.r + gap));
     const nearArena = (x, z, gap) => ARENAS.some((a) => d2(x, z, a.x, a.z) < (a.r + gap) * (a.r + gap));
-    const nearEntr = (x, z, gap) => this.dungeons.some((d) => d2(x, z, d.ex, d.ez) < gap * gap);
+    const nearEntr = (x, z, gap) => this.entrances.some((d) => d2(x, z, d.ex, d.ez) < gap * gap);
     for (const d of DUNGEONS) {
       let ex = 0, ez = 0;
       for (let t = 0; t < 400; t++) {
@@ -599,7 +650,7 @@ export class World {
         if (zoneAt(ex, ez) === d.zone && roadDist(ex, ez) > 7 && this.free(ex, ez, 6) && !nearTown(ex, ez, 10) && !nearArena(ex, ez, 10)) break;
       }
       this.addObs({ k: 'dentr', x: ex, z: ez, box: true, hw: 2.4, hd: 1.5, dng: d.i });
-      this.dungeons.push({ i: d.i, ex, ez });
+      this.entrances.push({ i: d.i, ex, ez });
     }
 
     // --- camps
@@ -682,13 +733,13 @@ export class World {
       this.addObs({ k: 'cliff', x: Math.cos(a) * rad, z: Math.sin(a) * rad, r: s, s, rot: R() * 6, c: false });
     }
     this.generateProps(R, (x, z, g) => nearTown(x, z, g) || nearEntr(x, z, 5), nearArena);
-    for (const d of DUNGEONS) this.generateDungeon(d, mulberry32(this.seed + 101 * (d.i + 1)));
+    for (const L of DLEVELS) this.generateDungeon(L, mulberry32(this.seed + 101 * (L.di + 1) + 7919 * L.f));
   }
   // A dungeon: a chain of rooms on a 4x4 grid of cells, joined by corridors, with a lord in the last room.
   generateDungeon(d, R) {
     const rr = (a, b) => a + R() * (b - a), ri = (a, b) => Math.floor(rr(a, b + 1));
     const N = DNG_N, CT = DNG_CELL / DNG_TILE, T = DNG_TILES;
-    const D = this.dungeons[d.i];
+    const D = this.dungeons[d.i] = { i: d.i };
     // longest random path through the cells (depth-first, keep the best)
     let best = [];
     const start = [0, ri(0, N - 1)];
@@ -745,17 +796,18 @@ export class World {
     const st = rooms[0], boss = rooms.find((r) => r.kind === 'boss');
     D.sx = wx(st.tx); D.sz = wz(st.tz) + 2;
     this.addObs({ k: 'dexit', x: wx(st.tx), z: wz(st.tz) - 2, r: 0.9, dng: d.i });
-    this.addObs({ k: 'dexit', x: wx(boss.x1) - 1, z: wz(boss.z0) + 1, r: 0.9, dng: d.i, late: 1 });
+    if (d.last) this.addObs({ k: 'dexit', x: wx(boss.x1) - 1, z: wz(boss.z0) + 1, r: 0.9, dng: d.i, late: 1 });
+    else { D.dx = wx(boss.tx); D.dz = wz(boss.tz) - 1; this.addObs({ k: 'ddown', x: D.dx, z: D.dz, r: 1.1, dng: d.i }); }
     // torches on the north walls, pillars in the big hall
     for (const r of rooms) {
       const n = r.kind === 'boss' ? 4 : 2;
       for (let k = 0; k < n; k++) { const tx = r.x0 + Math.round((k + 0.5) * (r.x1 - r.x0) / n); if (!isF(tx, r.z0 - 1)) this.addObs({ k: 'wtorch', x: wx(tx), z: wz(r.z0) - 0.75, r: 0.2, c: false, dng: d.i }); }
     }
-    for (const [fx, fz] of [[0.22, 0.22], [0.78, 0.22], [0.22, 0.78], [0.78, 0.78]]) this.addObs({ k: 'pillar', x: wx(boss.x0 + (boss.x1 - boss.x0) * fx), z: wz(boss.z0 + (boss.z1 - boss.z0) * fz), r: 0.9, h: 3.2, dng: d.i });
+    if (d.last) for (const [fx, fz] of [[0.22, 0.22], [0.78, 0.22], [0.22, 0.78], [0.78, 0.78]]) this.addObs({ k: 'pillar', x: wx(boss.x0 + (boss.x1 - boss.x0) * fx), z: wz(boss.z0 + (boss.z1 - boss.z0) * fz), r: 0.9, h: 3.2, dng: d.i });
     // monsters, loot and a lord
     const fights = rooms.filter((r) => r.kind === 'fight' || r.kind === 'side');
     const lvlAt = (r) => { const i = rooms.indexOf(r); const prog = r.kind === 'side' ? rooms[r.from] && rooms.indexOf(rooms[r.from]) / (best.length - 1) : i / (best.length - 1); return Math.round(d.lv[0] + clamp(prog || 0, 0, 1) * (d.lv[1] - d.lv[0])); };
-    let campId = 1000 + d.i * 100;
+    let campId = 1000 + d.i * 40;
     const inRoom = (r, pad) => [wx(rr(r.x0 + pad, r.x1 - pad)), wz(rr(r.z0 + pad, r.z1 - pad))];
     for (const r of fights) {
       const lvl = lvlAt(r); const cx = wx(r.tx), cz = wz(r.tz);
@@ -766,9 +818,14 @@ export class World {
     }
     {
       const lvl = d.lv[1]; const cx = wx(boss.tx), cz = wz(boss.tz) - 2;
-      this.camps.push({ id: campId++, x: cx, z: cz, zone: d.id, lvl, boss: true, mem: [{ type: d.boss, lvl, ox: 0, oz: 0 }] });
       const strong = d.mobs[d.mobs.length - 1];
-      this.camps.push({ id: campId++, x: cx, z: cz + 4, zone: d.id, lvl, mem: [{ type: strong, lvl, ox: -3, oz: 0 }, { type: strong, lvl, ox: 3, oz: 0 }] });
+      if (d.last) {
+        this.camps.push({ id: campId++, x: cx, z: cz, zone: d.id, lvl, boss: true, mem: [{ type: d.boss, lvl, ox: 0, oz: 0 }] });
+        this.camps.push({ id: campId++, x: cx, z: cz + 4, zone: d.id, lvl, mem: [{ type: strong, lvl, ox: -3, oz: 0 }, { type: strong, lvl, ox: 3, oz: 0 }] });
+      } else {
+        // guards at the stairs down
+        this.camps.push({ id: campId++, x: cx, z: cz + 3, zone: d.id, lvl, mem: [{ type: strong, lvl, ox: -3, oz: 0 }, { type: strong, lvl, ox: 3, oz: 0 }, { type: d.mobs[ri(0, d.mobs.length - 1)], lvl, ox: 0, oz: 2 }, { type: d.mobs[0], lvl, ox: 0, oz: -2 }] });
+      }
     }
     const PK = { earth: ['barrel', 'crate', 'urn'], bone: ['urn', 'bones', 'sarc'], ice: ['bones', 'crate', 'urn'], lava: ['urn', 'bones', 'barrel'], moss: ['urn', 'sarc', 'bones'] }[d.theme];
     const addProp = (k, x, z, lvl) => this.props.push({ id: this.props.length, k, x, z, zone: d.id, lvl, rot: R() * Math.PI * 2 });
@@ -782,7 +839,7 @@ export class World {
         const x = side === 0 ? r.x0 : side === 1 ? r.x1 : rr(r.x0 + 1, r.x1 - 1), z = side === 2 ? r.z0 : side === 3 ? r.z1 : rr(r.z0 + 1, r.z1 - 1);
         addProp(PK[ri(0, PK.length - 1)], wx(x), wz(z), lvl);
       }
-      if (r.kind === 'boss' || (r.kind === 'side' && R() < 0.7)) addProp('trove', wx(r.tx) + (r.kind === 'boss' ? 0 : 0), wz(r.kind === 'boss' ? r.z0 + 1 : r.tz), lvl);
+      if ((r.kind === 'boss' && (d.last || R() < 0.5)) || (r.kind === 'side' && R() < 0.6)) addProp('trove', wx(r.tx) + (r.kind === 'boss' ? 0 : 0), wz(r.kind === 'boss' ? r.z0 + 1 : r.tz), lvl);
     }
   }
   generateProps(R, nearTown, nearArena) {
@@ -938,6 +995,7 @@ export class Game {
     this.stock = {};
     this.broken = new Map(); // prop id -> time it comes back
     this.portals = new Map(); this.portalsDirty = false;
+    this.pets = []; this.petById = new Map();
     this.propsDirty = false;
     this.timers = [];
     this.events = [];
@@ -968,7 +1026,7 @@ export class Game {
     };
     if (s) Object.assign(p, s);
     else {
-      const w = { warrior: 'Rusty Sword', mage: 'Gnarled Staff', ranger: 'Short Bow' }[cls];
+      const w = WEAPON_BASES[cls][0];
       const it = makeItem(1, 0, 'weapon', cls); it.base = it.name = w; it.v = itemValue(it);
       p.eq.weapon = it;
       const ch = makeItem(1, 0, 'chest', cls); p.eq.chest = ch;
@@ -991,6 +1049,7 @@ export class Game {
     this.persist(pid, this.saveOf(p));
     this.players.delete(pid);
     for (const [id, pt] of this.portals) if (pt.owner === pid) { this.portals.delete(id); this.portalsDirty = true; }
+    for (const pt of this.pets.filter((o) => o.owner === pid)) this.killPet(pt);
     for (const [id, l] of this.loot) if (l.o === pid) this.loot.delete(id);
     for (const m of this.monsters) m.threat.delete(pid);
     this.rosterDirty = true;
@@ -1025,7 +1084,7 @@ export class Game {
       case 'useportal': return this.usePortal(p, num(m.id, -1) | 0);
       case 'smash': return this.smashProp(p, num(m.id, -1) | 0);
       case 'enter': return this.enterDungeon(p, num(m.d, -1) | 0);
-      case 'leave': return this.leaveDungeon(p);
+      case 'leave': case 'stairs': return this.useStairs(p);
       case 'quest': return this.questAction(p, m.a, m.q);
       case 'chat': {
         const text = String(m.m || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 160);
@@ -1150,20 +1209,32 @@ export class Game {
   }
   // ---------- dungeons
   enterDungeon(p, i) {
-    const d = DUNGEONS[i], D = this.world.dungeons[i];
-    if (!d || !p.alive || d2(p.x, p.z, D.ex, D.ez) > 6.5 * 6.5) return;
+    const d = DUNGEONS[i], E = this.world.entrances[i];
+    if (!d || !p.alive || d2(p.x, p.z, E.ex, E.ez) > 6.5 * 6.5) return;
     if (p.lvl < d.lv[0] - 2) this.note(p, `${d.name} is meant for level ${d.lv[0]}–${d.lv[1]}. Tread carefully.`, 'warn');
-    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
-    p.x = D.sx + rnd(-1, 1); p.z = D.sz + rnd(0, 1); p.grace = 9999; p.graceUntil = this.now + 1.5;
-    this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1, dng: i });
+    this.toFloor(p, d.first);
   }
-  leaveDungeon(p) {
-    const d = dungeonAt(p.x); if (!d || !p.alive) return;
-    if (!this.world.obs.some((o) => o.k === 'dexit' && o.dng === d.i && d2(o.x, o.z, p.x, p.z) < 5 * 5)) return;
-    const D = this.world.dungeons[d.i];
-    p.x = D.ex + rnd(-1, 1); p.z = D.ez + 3.5 + rnd(0, 0.5); p.grace = 9999; p.graceUntil = this.now + 1.5;
-    this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1 });
+  toFloor(p, k, atStairsDown = false) {
+    const L = DLEVELS[k], D = this.world.dungeons[k];
     this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+    const [x, z] = atStairsDown ? [D.dx, D.dz + 2.5] : [D.sx, D.sz];
+    p.x = x + rnd(-1, 1); p.z = z + rnd(0, 0.8); p.grace = 9999; p.graceUntil = this.now + 1.5;
+    this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1, floor: L.f + 1, floors: L.floors, dname: L.name });
+    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+  }
+  // stairs inside a dungeon: down to the next floor, up to the one before, or out
+  useStairs(p) {
+    const L = dungeonAt(p.x); if (!L || !p.alive) return;
+    let st = null, bd = 5 * 5;
+    for (const o of this.world.obs) if ((o.k === 'dexit' || o.k === 'ddown') && o.dng === L.i) { const dd = d2(o.x, o.z, p.x, p.z); if (dd < bd) { bd = dd; st = o; } }
+    if (!st) return;
+    if (st.k === 'ddown') return this.toFloor(p, L.i + 1);
+    if (st.late || L.f === 0) {
+      const E = this.world.entrances[L.di];
+      p.x = E.ex + rnd(-1, 1); p.z = E.ez + 3.5 + rnd(0, 0.5); p.grace = 9999; p.graceUntil = this.now + 1.5;
+      this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1 });
+      this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+    } else this.toFloor(p, L.i - 1, true);
   }
   // ---------- breakables
   smashProp(p, id, fromHit = false) {
@@ -1376,7 +1447,8 @@ export class Game {
     const [raw, crit] = this.rollDmg(p, mult);
     const amt = Math.max(1, Math.round(raw));
     m.hp -= amt;
-    m.threat.set(p.id, (m.threat.get(p.id) || 0) + amt * CLASSES[p.cls].threat + (m.threat.size ? 0 : 5));
+    const tid = opts.by ? opts.by.id : p.id;
+    m.threat.set(tid, (m.threat.get(tid) || 0) + amt * (opts.by ? 2.2 : CLASSES[p.cls].threat) + (m.threat.size ? 0 : 5));
     if (m.state === 'idle') this.aggro(m, p, true);
     p.lastCombat = this.now;
     this.ev(m.x, m.z, { e: 'dmg', i: m.id, v: amt, c: crit ? 1 : 0, s: p.id });
@@ -1391,6 +1463,7 @@ export class Game {
     const arm = p.st.armor * (p.buffs.stone > this.now ? 1.4 : 1);
     let dr = Math.min(0.75, arm / (arm + 40 + 12 * (m ? m.lvl : p.lvl)));
     if (p.buffs.warcry > this.now) dr = 1 - (1 - dr) * 0.8;
+    if (p.buffs.barrier > this.now) dr = 1 - (1 - dr) * (1 - (p.barrierDr || 0.4));
     const amt = Math.max(1, Math.round(amount * (1 - dr)));
     p.hp -= amt; p.lastHurt = this.now; p.lastCombat = this.now;
     if (p.cls === 'warrior') p.res = Math.min(p.st.mres, p.res + 2 + (amt / p.st.mhp) * 70);
@@ -1545,8 +1618,8 @@ export class Game {
     // chasing
     let tgt = null, tv = -1;
     for (const [pid, v] of m.threat) {
-      const p = this.players.get(pid);
-      if (!p || !p.alive || isSafe(p.zone)) { m.threat.delete(pid); continue; }
+      const p = this.players.get(pid) || this.petById.get(pid);
+      if (!p || !p.alive || (p.zone && isSafe(p.zone))) { m.threat.delete(pid); continue; }
       if (v > tv) { tv = v; tgt = p; }
     }
     const leash = m.def.boss ? 30 : 32;
@@ -1576,7 +1649,7 @@ export class Game {
         const hit = tgt;
         this.after(0.22, () => {
           if (m.dead || !hit.alive) return;
-          if (Math.hypot(hit.x - m.x, hit.z - m.z) <= reach + 1.0) this.hurtPlayer(hit, m.dmg * rnd(0.85, 1.15), m);
+          if (Math.hypot(hit.x - m.x, hit.z - m.z) <= reach + 1.0) { if (hit.pet) this.hurtPet(hit, m.dmg * rnd(0.85, 1.15)); else this.hurtPlayer(hit, m.dmg * rnd(0.85, 1.15), m); }
         });
       }
     }
@@ -1627,6 +1700,75 @@ export class Game {
     }
   }
 
+  // ---------- the Necromancer's servants
+  summon(p, ab, ax, az) {
+    const types = ab.pet === 'army' ? ['skelpet', 'skelpet', 'magepet', 'magepet'] : Array(ab.n).fill(ab.pet);
+    if (ab.max) {
+      const mine = this.pets.filter((pt) => pt.owner === p.id && !pt.until && pt.alive);
+      while (mine.length + types.length > ab.max) this.killPet(mine.shift());
+    }
+    types.forEach((type, i) => {
+      const a = Math.atan2(ax - p.x, az - p.z) + (i - (types.length - 1) / 2) * 0.8;
+      const [x, z] = this.world.resolve(p.x + Math.sin(a) * 2, p.z + Math.cos(a) * 2, 0.6);
+      const def = MONSTERS[type];
+      const pt = { id: this.nextId++, pet: true, owner: p.id, type, ti: MONSTER_LIST.indexOf(type), def, lvl: p.lvl, x, z, rot: a, alive: true,
+        mhp: Math.round(def.hp * (1 + 0.35 * (p.lvl - 1)) * (1 + p.st.mhp / 2000)), atkAt: this.now + 0.5, tgt: null, until: ab.life ? this.now + ab.life : 0, name: def.name };
+      pt.hp = pt.mhp;
+      this.pets.push(pt); this.petById.set(pt.id, pt);
+      this.ev(x, z, { e: 'fx', k: 'raise', x, z });
+    });
+  }
+  killPet(pt) {
+    if (!pt || !pt.alive) return;
+    pt.alive = false;
+    this.ev(pt.x, pt.z, { e: 'die', i: pt.id, x: pt.x, z: pt.z });
+    this.pets = this.pets.filter((o) => o !== pt); this.petById.delete(pt.id);
+  }
+  hurtPet(pt, amount) {
+    if (!pt.alive) return;
+    const amt = Math.max(1, Math.round(amount * 0.8));
+    pt.hp -= amt;
+    if (pt.hp <= 0) this.killPet(pt);
+  }
+  updatePet(pt, dt) {
+    const now = this.now, o = this.players.get(pt.owner);
+    if (!o || !o.alive || (pt.until && now > pt.until)) return this.killPet(pt);
+    const dO = Math.hypot(o.x - pt.x, o.z - pt.z);
+    if (dO > 26) { // the owner went through a portal or down some stairs
+      const [x, z] = this.world.resolve(o.x + rnd(-1.5, 1.5), o.z + rnd(-1.5, 1.5), 0.6); pt.x = x; pt.z = z; pt.tgt = null; return;
+    }
+    const speed = Math.max(pt.def.speed, o.st.move * 1.05);
+    let t = pt.tgt;
+    if (t && (t.dead || Math.hypot(t.x - o.x, t.z - o.z) > 15)) t = pt.tgt = null;
+    if (!t && !isSafe(o.zone)) {
+      let bd = 11 * 11;
+      for (const m of this.monsters) {
+        if (m.dead || Math.abs(m.x - o.x) > 11 || Math.abs(m.z - o.z) > 11) continue;
+        const dd = d2(m.x, m.z, o.x, o.z) + (m.state === 'chase' ? 0 : 30);
+        if (dd < bd) { bd = dd; t = m; }
+      }
+      pt.tgt = t;
+    }
+    const move = (tx, tz, sp) => {
+      const dx = tx - pt.x, dz = tz - pt.z, d = Math.hypot(dx, dz); if (d < 0.05) return;
+      const step = Math.min(d, sp * dt);
+      [pt.x, pt.z] = this.world.resolve(pt.x + dx / d * step, pt.z + dz / d * step, 0.5);
+      pt.rot = Math.atan2(dx, dz); pt.moving = true;
+    };
+    pt.moving = false;
+    if (t) {
+      const dx = t.x - pt.x, dz = t.z - pt.z, d = Math.hypot(dx, dz);
+      const reach = pt.def.range + this.monsterRadius(t) * 0.6;
+      if (d > reach) move(t.x, t.z, speed); else pt.rot = Math.atan2(dx, dz);
+      if (d <= reach + 0.3 && now >= pt.atkAt) {
+        pt.atkAt = now + pt.def.atkCd * rnd(0.9, 1.1);
+        this.ev(pt.x, pt.z, { e: 'matk', i: pt.id });
+        if (pt.def.ranged) this.spawnProj({ team: 'p', owner: o.id, kind: pt.def.proj, x: pt.x, z: pt.z, a: Math.atan2(dx, dz), speed: pt.def.pspeed, range: pt.def.range + 3, mult: pt.def.mult, aoe: 0, by: pt });
+        else this.hurtMonster(t, o, pt.def.mult, { by: pt });
+      }
+    } else if (dO > 3.5) move(o.x + Math.sin(pt.id) * 1.5, o.z + Math.cos(pt.id) * 1.5, speed);
+  }
+
   // ---------- abilities
   cast(p, slot, m) {
     const now = this.now;
@@ -1658,6 +1800,7 @@ export class Game {
         }
         this.smashIn(p, p.x, p.z, ab.range, ang, Math.min(ab.arc, Math.PI * 2));
         if (hits && slot === 0 && ab.gain) p.res = Math.min(p.st.mres, p.res + ab.gain);
+        if (hits && ab.heal) this.heal(p, p.st.mhp * ab.heal * Math.min(3, hits));
         if (hits && slot === 1) p.res = Math.min(p.st.mres, p.res + 4);
         break;
       }
@@ -1674,9 +1817,9 @@ export class Game {
         const fx = p.x, fz = p.z;
         const t = Math.hypot(tx - fx, tz - fz) / 32;
         p.x = tx; p.z = tz; p.grace = ab.dist + 3; p.graceUntil = now + 1.2;
-        this.ev(fx, fz, { e: 'fx', k: 'charge', i: p.id, x: fx, z: fz, x2: tx, z2: tz });
+        this.ev(fx, fz, { e: 'fx', k: ab.fx === 'shadow' ? 'shadowstep' : 'charge', i: p.id, x: fx, z: fz, x2: tx, z2: tz });
         this.after(t, () => {
-          this.ev(tx, tz, { e: 'fx', k: 'stomp', x: tx, z: tz, r: ab.r });
+          this.ev(tx, tz, { e: 'fx', k: ab.fx === 'shadow' ? 'shadowhit' : 'stomp', x: tx, z: tz, r: ab.r });
           for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, tx, tz) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult, { stun: ab.stun });
           this.smashIn(p, tx, tz, ab.r);
         });
@@ -1691,8 +1834,10 @@ export class Game {
         break;
       }
       case 'nova': {
-        this.ev(p.x, p.z, { e: 'fx', k: 'nova', x: p.x, z: p.z, r: ab.r });
-        for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, p.x, p.z) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult, { freeze: mo.def.boss ? 0.8 : ab.freeze });
+        this.ev(p.x, p.z, { e: 'fx', k: ab.fx || 'nova', i: p.id, x: p.x, z: p.z, r: ab.r });
+        const cc = (mo) => (ab.freeze ? { freeze: mo.def.boss ? 0.8 : ab.freeze } : ab.stun ? { stun: mo.def.boss ? 0.6 : ab.stun } : {});
+        for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, p.x, p.z) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult, cc(mo));
+        if (ab.inv) p.invUntil = now + ab.inv;
         this.smashIn(p, p.x, p.z, ab.r);
         break;
       }
@@ -1702,20 +1847,27 @@ export class Game {
         break;
       }
       case 'heal': {
-        this.ev(p.x, p.z, { e: 'fx', k: 'mend', i: p.id, x: p.x, z: p.z, r: ab.r });
+        this.ev(p.x, p.z, { e: 'fx', k: ab.fx === 'holy' ? 'holylight' : 'mend', i: p.id, x: p.x, z: p.z, r: ab.r });
         for (const o of this.players.values()) if (o.alive && d2(o.x, o.z, p.x, p.z) < ab.r * ab.r) { o.buffs.mend = now + ab.dur; o.mendHps = o.st.mhp * ab.pct / ab.dur; }
         break;
       }
-      case 'whirl': p.whirlUntil = now + ab.dur; p.whirlNext = now; break;
+      case 'whirl': p.whirlUntil = now + ab.dur; p.whirlNext = now; p.whirlAb = ab; break;
+      case 'barrier': {
+        this.ev(p.x, p.z, { e: 'fx', k: p.cls === 'necro' ? 'bonearmor' : 'divine', i: p.id, x: p.x, z: p.z, r: ab.r });
+        for (const o of this.players.values()) if (o.alive && (o === p || (ab.r && d2(o.x, o.z, p.x, p.z) < ab.r * ab.r))) { o.buffs.barrier = now + ab.dur; o.barrierDr = ab.dr; }
+        if (ab.inv) p.invUntil = now + ab.inv;
+        break;
+      }
+      case 'summon': this.summon(p, ab, ax, az); break;
       case 'meteor':
       case 'rain': {
         let dx = ax - p.x, dz = az - p.z; const len = Math.hypot(dx, dz);
         if (len > ab.range) { dx *= ab.range / len; dz *= ab.range / len; }
         const tx = p.x + dx, tz = p.z + dz;
         if (ab.kind === 'meteor') {
-          this.ev(tx, tz, { e: 'tg', x: tx, z: tz, r: ab.r, d: ab.delay, k: 'meteor' });
+          this.ev(tx, tz, { e: 'tg', x: tx, z: tz, r: ab.r, d: ab.delay, k: ab.tg || 'meteor' });
           this.after(ab.delay, () => {
-            this.ev(tx, tz, { e: 'fx', k: 'boom', x: tx, z: tz, r: ab.r });
+            this.ev(tx, tz, { e: 'fx', k: ab.fx || 'boom', x: tx, z: tz, r: ab.r });
             for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, tx, tz) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult);
             if (this.players.has(p.id)) this.smashIn(p, tx, tz, ab.r);
           });
@@ -1739,7 +1891,7 @@ export class Game {
   }
   explode(pr, x, z) {
     const p = this.players.get(pr.owner);
-    this.ev(x, z, { e: 'fx', k: 'fireboom', x, z, r: pr.aoe });
+    this.ev(x, z, { e: 'fx', k: pr.kind === 'hammer' ? 'holyboom' : 'fireboom', x, z, r: pr.aoe });
     if (!p) return;
     for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, x, z) < (pr.aoe + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, pr.mult);
     this.smashIn(p, x, z, pr.aoe);
@@ -1760,7 +1912,7 @@ export class Game {
             if (d2(mo.x, mo.z, pr.x, pr.z) < rr * rr) {
               const p = this.players.get(pr.owner);
               if (pr.aoe) this.explode(pr, pr.x, pr.z);
-              else if (p) this.hurtMonster(mo, p, pr.mult);
+              else if (p) this.hurtMonster(mo, p, pr.mult, pr.by ? { by: pr.by } : {});
               done = true; break;
             }
           }
@@ -1771,6 +1923,10 @@ export class Game {
               this.hurtPlayer(p, pr.dmg * rnd(0.85, 1.15), pr.src);
               done = true; break;
             }
+          }
+          if (!done) for (const pt of this.pets) {
+            if (!pt.alive || Math.abs(pt.x - pr.x) > 1 || Math.abs(pt.z - pr.z) > 1) continue;
+            if (d2(pt.x, pt.z, pr.x, pr.z) < 0.8 * 0.8) { this.hurtPet(pt, pr.dmg * rnd(0.85, 1.15)); done = true; break; }
           }
         }
         if (pr.trav >= pr.range) done = true;
@@ -1815,15 +1971,15 @@ export class Game {
       const st = p.st;
       // resources
       if (p.cls === 'warrior') { if (now - p.lastCombat > 5) p.res = Math.max(0, p.res - 6 * dt); }
-      else p.res = Math.min(st.mres, p.res + (CLASSES[p.cls].resRegen + (p.cls === 'mage' ? 0.5 * p.lvl : 0)) * dt);
+      else p.res = Math.min(st.mres, p.res + (CLASSES[p.cls].resRegen + (p.cls === 'mage' ? 0.5 * p.lvl : (CLASSES[p.cls].resRegenL || 0) * p.lvl)) * dt);
       // health
       if (isSafe(p.zone)) { const tc = TOWN_BY_ID[p.zone]; p.hp = Math.min(st.mhp, p.hp + st.mhp * (Math.hypot(p.x - tc.x, p.z - tc.z) < 5.5 ? 0.3 : 0.06) * dt); }
       else if (now - p.lastHurt > 5) p.hp = Math.min(st.mhp, p.hp + st.mhp * 0.015 * dt);
       if (p.buffs.mend > now) p.hp = Math.min(st.mhp, p.hp + p.mendHps * dt);
       // whirlwind
       if (p.whirlUntil > now && now >= p.whirlNext) {
-        p.whirlNext = now + 0.25;
-        const ab = CLASSES.warrior.ab[3];
+        const ab = p.whirlAb || CLASSES.warrior.ab[3];
+        p.whirlNext = now + ab.every;
         for (const mo of this.monsters) if (!mo.dead && d2(mo.x, mo.z, p.x, p.z) < (ab.r + this.monsterRadius(mo)) ** 2) this.hurtMonster(mo, p, ab.mult);
         this.smashIn(p, p.x, p.z, ab.r);
       }
@@ -1838,6 +1994,7 @@ export class Game {
       }
     }
     for (const m of this.monsters) this.updateMonster(m, dt);
+    for (const pt of [...this.pets]) this.updatePet(pt, dt);
     // keep chasing monsters from stacking on top of each other
     const active = this.monsters.filter((m) => !m.dead && m.state === 'chase');
     for (let i = 0; i < active.length; i++) for (let j = i + 1; j < active.length; j++) {
@@ -1881,7 +2038,7 @@ export class Game {
     }
     const pl = [];
     for (const p of this.players.values()) {
-      const f = (p.alive ? 0 : 1) | (p.whirlUntil > now ? 2 : 0) | (p.buffs.warcry > now ? 4 : 0) | (p.invUntil > now ? 8 : 0) | (p.buffs.mend > now ? 16 : 0);
+      const f = (p.alive ? 0 : 1) | (p.whirlUntil > now ? 2 : 0) | (p.buffs.warcry > now ? 4 : 0) | (p.invUntil > now ? 8 : 0) | (p.buffs.mend > now ? 16 : 0) | (p.buffs.barrier > now ? 32 : 0);
       pl.push([p.id, r2(p.x), r2(p.z), r2(p.rot), Math.round((p.hp / p.st.mhp) * 1000), f]);
     }
     const VR2 = VIEW_R * VIEW_R, ER2 = 70 * 70;
@@ -1895,10 +2052,14 @@ export class Game {
         if (m.def.boss) e.push(Math.round(m.hp), m.mhp);
         mon.push(e);
       }
+      for (const pt of this.pets) {
+        if (d2(pt.x, pt.z, p.x, p.z) > VR2) continue;
+        mon.push([pt.id, pt.ti, r2(pt.x), r2(pt.z), r2(pt.rot), Math.round((pt.hp / pt.mhp) * 1000), pt.lvl, 64 | (pt.owner === p.id ? 128 : 0)]);
+      }
       const ev = [];
       for (const e of this.events) if (d2(e.x, e.z, p.x, p.z) < ER2) ev.push(e.o);
       const msg = { t: 's', T: r2(now), p: pl, m: mon, e: ev,
-        me: [Math.ceil(p.hp), p.st.mhp, Math.floor(p.res), p.st.mres, p.cds.map((c) => Math.max(0, r2(c - now))), p.buffs.warcry > now ? r2(p.buffs.warcry - now) : 0, p.buffs.mend > now ? r2(p.buffs.mend - now) : 0, p.buffs.fury > now ? Math.ceil(p.buffs.fury - now) : 0, p.buffs.stone > now ? Math.ceil(p.buffs.stone - now) : 0] };
+        me: [Math.ceil(p.hp), p.st.mhp, Math.floor(p.res), p.st.mres, p.cds.map((c) => Math.max(0, r2(c - now))), p.buffs.warcry > now ? r2(p.buffs.warcry - now) : 0, p.buffs.mend > now ? r2(p.buffs.mend - now) : 0, p.buffs.fury > now ? Math.ceil(p.buffs.fury - now) : 0, p.buffs.stone > now ? Math.ceil(p.buffs.stone - now) : 0, p.buffs.barrier > now ? r2(p.buffs.barrier - now) : 0] };
       if (p.lootDirty || this.tickN % 10 === 0) {
         p.lootDirty = false;
         const L = [];

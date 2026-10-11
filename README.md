@@ -4,15 +4,16 @@ Et online multiplayer action-RPG til browseren. Kampene er som i Diablo, og
 quests, klasser og zoner er som i World of Warcraft. Op til 16 spillere kan
 være i samme verden på én gang.
 
-- **3 klasser:** Warrior (tank, nærkamp), Mage (magi på afstand, area damage)
-  og Ranger (bue, kan heale holdet).
+- **6 klasser:** Warrior (tank, nærkamp), Mage (magi på afstand, area damage), Ranger (bue,
+  kan heale holdet), Paladin (hammer og skjold, stunner, healer og beskytter holdet),
+  Necromancer (vækker skeletter, der kæmper for ham) og Assassin (hurtige knive og skyggespring).
 - **8 zoner og 4 byer:** Inderst ligger Duskhold med Whispering Meadow (level 1–3),
   Thornwood (3–6), Ashen Graveyard (6–9) og Hollow Crypt (9–10). Bag bjergkammen
   ligger de ydre lande: Frostpeak (11–13) med byen **Frosthaven**, Emberwaste (13–15)
   med **Cinderwatch**, Drowned Marsh (15–17) med **Mirebrook** og Shattered Spire (17–20).
 - **Max level 20** og **20 quests** fordelt på fire quest-givere, med to bosser:
   **Morvath, the Hollow King** og **Nharzul, the Shardbound**.
-- **5 dungeons** under jorden, ligesom i Diablo: Goblin Warren (level 4–6), The Catacombs (7–9),
+- **5 dungeons med flere etager** under jorden, ligesom i Diablo (2–3 etager hver): Goblin Warren (level 4–6), The Catacombs (7–9),
   Frozen Depths (12–14), The Molten Deep (14–16) og Sunken Temple (16–18). Find trappen ned
   (▼ på kortet), kæmp dig gennem rummene og dræb dungeon-bossen, som vogter en skattekiste.
 - **Town portal (tast T):** stå stille et øjeblik, så åbner en portal til den sidste by, du

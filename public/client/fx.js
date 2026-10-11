@@ -76,13 +76,19 @@ export class Particles {
 }
 
 // ---------------------------------------------------------------- projectiles
-const PCOL = { bolt: 0xa37bff, fireball: 0xff7a1a, arrow: 0xe8dcc0, fire: 0xff6a20, arrow_m: 0x8aff9a, bone: 0xdddddd, frost: 0x9ae8ff, void: 0xc08aff };
+const PCOL = { bolt: 0xa37bff, fireball: 0xff7a1a, arrow: 0xe8dcc0, fire: 0xff6a20, arrow_m: 0x8aff9a, bone: 0xdddddd, frost: 0x9ae8ff, void: 0xc08aff, hammer: 0xffd860, knife: 0xd0d8e8 };
 export class Projectiles {
   constructor(scene, parts) { this.scene = scene; this.parts = parts; this.list = new Map(); }
   spawn(e) {
     const kind = PROJ_KINDS[e.k] || 'bolt';
     const g = new THREE.Group();
-    if (kind === 'arrow' || kind === 'arrow_m') {
+    if (kind === 'knife') {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.55), new THREE.MeshBasicMaterial({ color: 0xe0e6ee }));
+      g.add(blade); g.add(glowSprite(0xb08aff, 0.5, 0.5));
+    } else if (kind === 'bone') {
+      const sh = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.9, 5), new THREE.MeshBasicMaterial({ color: 0xeee6d0 })); sh.rotation.x = Math.PI / 2;
+      g.add(sh); g.add(glowSprite(0x9affb0, 0.7, 0.5));
+    } else if (kind === 'arrow' || kind === 'arrow_m') {
       const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.95), new THREE.MeshBasicMaterial({ color: kind === 'arrow' ? 0xd8c8a0 : 0x9adfa0 }));
       g.add(shaft);
       const gl = glowSprite(PCOL[kind], 0.6, 0.5); g.add(gl);
@@ -108,6 +114,7 @@ export class Projectiles {
       const { x, y, z } = p.g.position;
       if (p.kind === 'fireball') this.parts.emit(x, y, z, { n: 3, color: 0xff8a20, color2: 0xffd060, speed: 0.6, life: [0.25, 0.5], size: [0.35, 0.6], vy: 0.6, grow: -0.6 });
       else if (p.kind === 'bolt') this.parts.emit(x, y, z, { n: 2, color: 0x9a6aff, color2: 0xd0b8ff, speed: 0.3, life: [0.2, 0.35], size: [0.2, 0.32] });
+      else if (p.kind === 'hammer') this.parts.emit(x, y, z, { n: 2, color: 0xffd860, color2: 0xfff6c0, speed: 0.4, life: [0.25, 0.45], size: [0.25, 0.4] });
       else if (p.kind === 'frost') this.parts.emit(x, y, z, { n: 2, color: 0x9ae8ff, color2: 0xffffff, speed: 0.3, life: [0.2, 0.4], size: [0.2, 0.32] });
       else if (p.kind === 'void') this.parts.emit(x, y, z, { n: 2, color: 0x8a4aff, color2: 0xe0c0ff, speed: 0.3, life: [0.2, 0.4], size: [0.22, 0.36] });
       else if (p.kind === 'fire') this.parts.emit(x, y, z, { n: 2, color: 0xff5a10, color2: 0xffb040, speed: 0.4, life: [0.2, 0.4], size: [0.25, 0.4], vy: 0.5 });
@@ -117,7 +124,7 @@ export class Projectiles {
 }
 
 // ---------------------------------------------------------------- telegraphs & ground rings
-const TCOL = { boss: 0xff3020, meteor: 0xff8a20, rain: 0x8aff6a };
+const TCOL = { boss: 0xff3020, meteor: 0xff8a20, rain: 0x8aff6a, bone: 0x9affb0 };
 export class Telegraphs {
   constructor(scene) { this.scene = scene; this.list = []; }
   add(x, z, r, dur, kind) {

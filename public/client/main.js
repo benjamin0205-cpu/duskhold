@@ -4,7 +4,7 @@ import {
   Game, World, CLASSES, CLASS_LIST, MONSTERS, MONSTER_LIST, ZONES, zoneAt, zoneLevel, QUESTS, QUEST_BY_ID, questState, npcMarker,
   NPCS, SLOTS, SLOT_NAMES, RARITY, RARITY_COLORS, AFFIX, computeStats, xpNeed, PLAYER_R, TOWN_R, BOSS_ARENA, MAX_LEVEL, POTION_COST,
   gambleCost, INV_SIZE, TICK, WORLD_R, ROADS, roadWiggle, TOWNS, TOWN_BY_ID, isSafe, SHOPS, SHOP_INFO, NPC_BY_ID,
-  BOSS_ARENA2, INV_MAX, STASH_MAX, INNER_R, PROPS, DUNGEONS, dungeonAt, DNG_TILE, DNG_TILES,
+  BOSS_ARENA2, INV_MAX, STASH_MAX, INNER_R, PROPS, DUNGEONS, DLEVELS, dungeonAt, DNG_TILE, DNG_TILES,
 } from '../sim.js';
 import { sfx, initAudio, setSound, setMusic } from './audio.js';
 import { paintAbility, drawItemInto } from './icons.js';
@@ -200,10 +200,11 @@ function addMonsterEnt(a) {
     const gl = glowSprite(0x4a7aff, 2.4, 0.35); gl.position.y = 1; rig.root.add(gl);
   }
   if (def.boss) { const r = groundRing(type === 'boss2' ? 0xb06aff : 0x5aff8a, 0.5); r.scale.setScalar(2.4); r.position.y = 0.05; rig.root.add(r); e.boss = true; }
+  if (a[7] & 64) { e.pet = true; e.mine = !!(a[7] & 128); const r = groundRing(0x7affa0, e.mine ? 0.55 : 0.3); r.scale.setScalar(0.9); r.position.y = 0.05; rig.root.add(r); }
   e.blob = blob(def.r * 2.2); rig.root.add(e.blob);
   rig.root.position.set(e.x, 0, e.z); rig.root.rotation.y = e.rot;
   scene.add(rig.root);
-  e.label = makeLabel(champ ? 'champ' : ''); e.label.innerHTML = '<span class="nm"></span> <span class="lv"></span><div class="hpb"><i></i></div>';
+  e.label = makeLabel(champ ? 'champ' : e.pet ? 'pl' : ''); e.label.innerHTML = '<span class="nm"></span> <span class="lv"></span><div class="hpb"><i></i></div>';
   e.label.querySelector('.nm').textContent = e.name; e.label.querySelector('.lv').textContent = def.boss ? '' : `${a[6]}`;
   e.hpBar = e.label.querySelector('.hpb i');
   for (const m of rig.mats) m.userData.e0 = m.emissive.clone();
@@ -225,10 +226,10 @@ for (const n of NPCS) {
 }
 const propLabel = makeLabel('obj prop'); propLabel.style.display = 'none'; propLabel.style.pointerEvents = 'none';
 // chests and waystones you can click
-S.objs = world.obs.filter((o) => o.k === 'chest' || o.k === 'waystone' || o.k === 'dentr' || o.k === 'dexit').map((o) => {
+S.objs = world.obs.filter((o) => o.k === 'chest' || o.k === 'waystone' || o.k === 'dentr' || o.k === 'dexit' || o.k === 'ddown').map((o) => {
   const label = makeLabel('obj' + (o.k === 'dentr' ? ' dng' : ''));
-  if (o.k === 'dentr') { const d = DUNGEONS[o.dng]; label.innerHTML = `${esc(d.name)}<span class="t">Dungeon · level ${d.lv[0]}–${d.lv[1]}</span>`; }
-  else label.textContent = o.k === 'chest' ? 'Chest' : o.k === 'waystone' ? 'Waystone' : 'Stairs up';
+  if (o.k === 'dentr') { const d = DUNGEONS[o.dng]; label.innerHTML = `${esc(d.name)}<span class="t">Dungeon · level ${d.lv[0]}–${d.lv[1]} · ${d.floors} floors</span>`; }
+  else label.textContent = o.k === 'chest' ? 'Chest' : o.k === 'waystone' ? 'Waystone' : o.k === 'ddown' ? 'Stairs down' : (o.late || DLEVELS[o.dng].f === 0) ? 'Way out' : 'Stairs up';
   label.onpointerdown = (ev) => { ev.stopPropagation(); if (ev.button === 0) goToObj(obj); };
   const obj = { k: o.k, x: o.x, z: o.z, town: o.town, dng: o.dng, label };
   return obj;
@@ -344,6 +345,7 @@ function onMessage(m) {
     case 'wp': { const t = TOWN_BY_ID[m.town]; banner('Waystone found', `YOU CAN NOW TRAVEL TO ${t.name.toUpperCase()}`); sfx.quest(); addChat(null, `You found the waystone of ${t.name}. You will now rise here when you fall, and you can travel here from any waystone.`, 'sys'); return; }
     case 'setpos': {
       if (m.travel) { S.cam.x = m.x; S.cam.z = m.z; closeAll(); sfx.blink(); }
+      if (m.floor) setTimeout(() => banner(m.dname, `FLOOR ${m.floor} OF ${m.floors}`), 50);
       S.me.x = m.x; S.me.z = m.z; S.me.dash = null; S.path = null;
       if (m.respawn) { S.me.dead = false; $('death').hidden = true; S.cam.x = m.x; S.cam.z = m.z; }
       S.sentX = m.x; S.sentZ = m.z;
@@ -372,6 +374,7 @@ function onSnap(s) {
     let e = S.monsters.get(a[0]);
     if (!e || e.dying) { if (e) removeMonsterEnt(e); e = addMonsterEnt(a); }
     if (a[5] < e.hp) e.lastHurt = now;
+    if (e.pet) { e.tx = a[2]; e.tz = a[3]; e.trot = a[4]; e.hp = a[5]; continue; }
     e.tx = a[2]; e.tz = a[3]; e.trot = a[4]; e.hp = a[5]; e.flags = a[7];
     if (e.boss) { e.bhp = a[8]; e.bmhp = a[9]; }
   }
@@ -386,7 +389,7 @@ function onSnap(s) {
   const me = s.me;
   S.hp = me[0]; S.mhp = me[1]; S.res = me[2]; S.mres = me[3];
   for (let i = 0; i < 6; i++) S.cds[i] = me[4][i];
-  S.buffs[0] = me[5]; S.buffs[1] = me[6]; S.buffs[2] = me[7] || 0; S.buffs[3] = me[8] || 0;
+  S.buffs[0] = me[5]; S.buffs[1] = me[6]; S.buffs[2] = me[7] || 0; S.buffs[3] = me[8] || 0; S.buffs[4] = me[9] || 0;
   for (const ev of s.e) onEvent(ev);
   renderParty(false);
   updateOrbs();
@@ -478,6 +481,16 @@ function onFx(e, v) {
       sfx.smash(e.pk, v);
       return;
     }
+    case 'holylight': rings.add(e.x, e.z, 0.5, e.r, 0.8, 0xffe080, 0.06, 0.15); for (const p of S.players.values()) if (Math.hypot(p.x - e.x, p.z - e.z) < e.r) parts.emit(p.x, 0.5, p.z, { n: 30, color: 0xffe080, color2: 0xffffff, speed: 0.6, radius: 0.7, life: [0.7, 1.3], size: [0.2, 0.4], vy: 3.5 }); sfx.mend(); return;
+    case 'holy': rings.add(e.x, e.z, 0.5, e.r, 0.4, 0xffd860, 0.08, 0.35); parts.emit(e.x, 0.8, e.z, { n: 70, color: 0xffd860, color2: 0xffffff, speed: 13, ring: true, life: [0.25, 0.5], size: [0.25, 0.5], drag: 0.9 }); sfx.warcry(); return;
+    case 'holyboom': rings.add(e.x, e.z, 0.3, e.r, 0.3, 0xffd860); parts.emit(e.x, 1.0, e.z, { n: 40, color: 0xffd860, color2: 0xffffff, speed: 6, life: [0.2, 0.5], size: [0.3, 0.6], drag: 0.9 }); sfx.hit(v); return;
+    case 'divine': rings.add(e.x, e.z, 0.5, Math.max(3, e.r), 0.6, 0xffe080); for (const p of S.players.values()) if (Math.hypot(p.x - e.x, p.z - e.z) < Math.max(1, e.r)) parts.emit(p.x, 1, p.z, { n: 30, color: 0xfff0b0, color2: 0xffffff, speed: 1.5, radius: 0.8, life: [0.6, 1.1], size: [0.2, 0.35], vy: 2 }); sfx.mend(); return;
+    case 'bonearmor': parts.emit(e.x, 1, e.z, { n: 40, color: 0xeee6d0, color2: 0x9affb0, speed: 2.5, ring: true, life: [0.4, 0.9], size: [0.15, 0.3], drag: 0.92 }); sfx.stomp(); return;
+    case 'bones': shake(0.3); rings.add(e.x, e.z, 0.5, e.r + 0.5, 0.4, 0x9affb0); parts.emit(e.x, 0.5, e.z, { n: 60, color: 0xeee6d0, color2: 0xc83a2a, speed: 9, life: [0.3, 0.8], size: [0.25, 0.5], grav: 14, vy: 5 }); sfx.boom(v * 0.7); return;
+    case 'raise': rings.add(e.x, e.z, 0.3, 1.6, 0.6, 0x7affa0); parts.emit(e.x, 0.2, e.z, { n: 30, color: 0x7affa0, color2: 0xeee6d0, speed: 1.2, radius: 0.6, life: [0.5, 1], size: [0.2, 0.35], vy: 3 }); sfx.bossWake(); return;
+    case 'shadowstep': trail(e.x, e.z, e.x2, e.z2, 0x6a3aaa, 12); if (!self) sfx.blink(); else sfx.blink(); return;
+    case 'shadowhit': rings.add(e.x, e.z, 0.4, e.r + 0.4, 0.35, 0xb06aff); parts.emit(e.x, 1, e.z, { n: 30, color: 0x8a4aff, color2: 0xe0c8ff, speed: 5, ring: true, life: [0.25, 0.5], size: [0.25, 0.45], drag: 0.9 }); sfx.cleave(v); return;
+    case 'smoke': parts.emit(e.x, 0.6, e.z, { n: 60, color: 0x6a6070, color2: 0xb0a8b8, speed: 3, radius: 1, life: [1.2, 2.2], size: [0.9, 1.6], drag: 0.9, vy: 0.6, grow: 1 }); sfx.roll(); return;
     case 'portalcast': rings.add(e.x, e.z, 2.5, 0.4, 1.5, 0x7ab8ff, 0.06, 0.4); parts.emit(e.x, 0.3, e.z, { n: 40, color: 0x7ab8ff, color2: 0xffffff, speed: 1.5, radius: 1.4, life: [0.8, 1.5], size: [0.15, 0.3], vy: 2.5 }); if (self) sfx.blink(); return;
     case 'travel': rings.add(e.x, e.z, 0.4, 3.5, 0.7, 0x7ad8ff); parts.emit(e.x, 0.4, e.z, { n: 50, color: 0x7ad8ff, color2: 0xffffff, speed: 0.8, radius: 0.9, life: [0.6, 1.2], size: [0.2, 0.4], vy: 6 }); return;
     case 'respawn': parts.emit(e.x, 0.3, e.z, { n: 50, color: 0x9ad0ff, color2: 0xffffff, speed: 0.8, radius: 0.8, life: [0.8, 1.4], size: [0.25, 0.4], vy: 5 }); return;
@@ -508,7 +521,7 @@ function playCastVisual(p, slot, ang, v = 1) {
     swooshes.add(p.x, p.z, ang, ab.range, Math.min(ab.arc, 3.2), slot === 0 ? 0xffe0c0 : 0xff8050);
     slot === 0 ? sfx.swing(v) : sfx.cleave(v);
   } else if (ab.kind === 'proj') {
-    if (ab.proj === 'arrow') sfx.arrow(v); else if (ab.proj === 'fireball') sfx.fire(v * 0.7); else sfx.bolt(v);
+    if (ab.proj === 'arrow' || ab.proj === 'knife') sfx.arrow(v); else if (ab.proj === 'fireball') sfx.fire(v * 0.7); else if (ab.proj === 'hammer') sfx.cleave(v * 0.7); else sfx.bolt(v);
   } else if (ab.kind === 'whirl') sfx.whirl();
   else if (ab.kind === 'meteor') { /* sound plays with the meteor */ }
 }
@@ -516,7 +529,7 @@ function playCastVisual(p, slot, ang, v = 1) {
 // ================================================================ pathfinding
 // One walk grid for the realm, and one per dungeon (built the first time you go down).
 const OVER = { ox: -240, oz: -240, n: 480, walk: null };
-const DGRID = DUNGEONS.map((d) => ({ ox: d.ox, oz: d.oz, n: DNG_TILES * DNG_TILE, walk: null }));
+const DGRID = DLEVELS.map((d) => ({ ox: d.ox, oz: d.oz, n: DNG_TILES * DNG_TILE, walk: null }));
 let PG = OVER; // the grid in use
 function buildGrid(G) {
   if (G.walk) return;
@@ -596,7 +609,7 @@ function pickHover() {
   const mx = S.mouse.x, my = S.mouse.y;
   let best = null, bd = 1e9;
   for (const e of S.monsters.values()) {
-    if (e.dying) continue;
+    if (e.dying || e.pet) continue;
     const h = (e.rig.h || 2) * e.rig.root.scale.y;
     const s = project(e.x, h * 0.45, e.z); if (!s) continue;
     const rad = Math.max(30, (e.def.r * 38 + 14) * (e.flags & 1 ? 1.25 : 1) * (e.boss ? 1.6 : 1));
@@ -795,11 +808,11 @@ function buildHotbar() {
     b.onmouseleave = hideTip;
     bar.appendChild(b);
   }
-  const rc = { Rage: ['#e8582a', '#6a1608'], Mana: ['#5d84ff', '#1b2f86'], Focus: ['#8ad06a', '#1f5a14'] }[d.res];
+  const rc = { Rage: ['#e8582a', '#6a1608'], Mana: ['#5d84ff', '#1b2f86'], Focus: ['#8ad06a', '#1f5a14'], Faith: ['#f0d070', '#7a5a10'], Essence: ['#6affb0', '#0e4a2a'], Energy: ['#d8a0ff', '#4a1a6a'] }[d.res];
   const orb = $('orb-res'); orb.style.setProperty('--rc1', rc[0]); orb.style.setProperty('--rc2', rc[1]);
   orb.querySelector('.cap').textContent = d.res.toUpperCase();
 }
-function nearestMonster(r) { let best = null, bd = r; for (const e of S.monsters.values()) { if (e.dying) continue; const d = Math.hypot(e.x - S.me.x, e.z - S.me.z); if (d < bd) { bd = d; best = e; } } return best; }
+function nearestMonster(r) { let best = null, bd = r; for (const e of S.monsters.values()) { if (e.dying || e.pet) continue; const d = Math.hypot(e.x - S.me.x, e.z - S.me.z); if (d < bd) { bd = d; best = e; } } return best; }
 function showAbilityTip(el, s) {
   const d = CLASSES[S.cls];
   if (s === 5) return showTip(el, `<h4>Healing Potion</h4><div class="desc">Restores 45% of your life. 6 sec cooldown.</div><div class="hint">You have ${S.inv?.pots ?? 0}. Every trader sells more for ${POTION_COST} gold.</div>`);
@@ -815,6 +828,7 @@ function updateOrbs() {
   $('orb-res').querySelector('.val').textContent = `${S.res} / ${S.mres}`;
   const bf = []; if (S.buffs[0] > 0) bf.push(`<span class="buff" style="color:#ff8a6a">War Cry ${Math.ceil(S.buffs[0])}s</span>`); if (S.buffs[1] > 0) bf.push(`<span class="buff" style="color:#8ae06a">Mend ${Math.ceil(S.buffs[1])}s</span>`);
   const mmss = (v) => `${Math.floor(v / 60)}:${String(Math.ceil(v) % 60).padStart(2, '0')}`;
+  if (S.buffs[4] > 0) bf.push(`<span class="buff" style="color:${S.cls === 'necro' ? '#d8f0d0' : '#ffe080'}">${S.cls === 'necro' ? 'Bone Armor' : 'Shield'} ${Math.ceil(S.buffs[4])}s</span>`);
   if (S.buffs[2] > 0) bf.push(`<span class="buff" style="color:#ff7a4a">Fury ${mmss(S.buffs[2])}</span>`); if (S.buffs[3] > 0) bf.push(`<span class="buff" style="color:#b8c0d0">Stone ${mmss(S.buffs[3])}</span>`);
   const html = bf.join(''); if ($('buffs').innerHTML !== html) $('buffs').innerHTML = html;
 }
@@ -1029,7 +1043,7 @@ function openNpc(id) {
 }
 function openObj(o) {
   if (o.k === 'dentr') { send({ t: 'enter', d: o.dng }); return; }
-  if (o.k === 'dexit') { send({ t: 'leave' }); return; }
+  if (o.k === 'dexit' || o.k === 'ddown') { send({ t: 'stairs' }); return; }
   closeAll(); S.openObj = o; sfx.click();
   if (o.k === 'chest') { $('stashwin').hidden = false; renderStash(); openWin('charwin'); }
   else { $('waywin').hidden = false; renderWay(); }
@@ -1234,6 +1248,7 @@ function dungeonMap(d) {
   x.globalAlpha = 0.9; x.fillStyle = th.wall;
   for (const o of world.obs) if (o.k === 'dwall' && o.dng === d.i) x.fillRect(o.tx * T, o.tz * T, T, T);
   x.globalAlpha = 1;
+  for (const o of world.obs) if (o.k === 'ddown' && o.dng === d.i) { x.fillStyle = '#ff8a3a'; x.beginPath(); x.arc((o.x - d.ox) * DMAPRES, (o.z - d.oz) * DMAPRES, 2.4 * DMAPRES, 0, Math.PI * 2); x.fill(); }
   for (const o of world.obs) if (o.k === 'dexit' && o.dng === d.i) { x.fillStyle = '#bfe6ff'; x.beginPath(); x.arc((o.x - d.ox) * DMAPRES, (o.z - d.oz) * DMAPRES, 2.2 * DMAPRES, 0, Math.PI * 2); x.fill(); }
   dmaps[d.i] = c; return c;
 }
@@ -1242,7 +1257,7 @@ function drawMarkers(x, toPx, scale, big) {
   for (const l of S.loot.values()) if (l.kind === 'item' && l.r >= 2) { const [px, py] = toPx(l.x, l.z); x.fillStyle = RARITY_COLORS[l.r]; x.fillRect(px - 2, py - 2, 4, 4); }
   for (const e of S.monsters.values()) {
     if (e.dying) continue; const [px, py] = toPx(e.x, e.z);
-    x.fillStyle = e.boss ? '#8aff9a' : e.flags & 1 ? '#7aa8ff' : '#e04030';
+    x.fillStyle = e.pet ? '#7affa0' : e.boss ? '#8aff9a' : e.flags & 1 ? '#7aa8ff' : '#e04030';
     x.beginPath(); x.arc(px, py, e.boss ? 5 : big ? 2.5 : 3, 0, Math.PI * 2); x.fill();
   }
   for (const pr of world.props) { if (pr.k !== 'trove' || S.broken.has(pr.id) || Math.abs(pr.x - S.me.x) > (big ? 999 : 50) || Math.abs(pr.z - S.me.z) > (big ? 999 : 50)) continue; if (big && Math.hypot(pr.x - S.me.x, pr.z - S.me.z) > 60) continue; const [px, py] = toPx(pr.x, pr.z); x.fillStyle = '#ffc840'; x.fillRect(px - 2.5, py - 2, 5, 4); }
@@ -1278,7 +1293,8 @@ function drawBigMap() {
     const span = DNG_TILES * DNG_TILE; const sc = W / span;
     x.drawImage(dungeonMap(dg), 0, 0, W, W);
     x.textAlign = 'center'; x.font = `700 ${Math.round(W * 0.04)}px "Grenze Gotisch", Georgia, serif`; x.fillStyle = '#f3dfb2'; x.strokeStyle = 'rgba(0,0,0,.85)'; x.lineWidth = 5;
-    x.strokeText(dg.name, W / 2, W * 0.06); x.fillText(dg.name, W / 2, W * 0.06);
+    const ttl = `${dg.name} · Floor ${dg.f + 1} of ${dg.floors}`;
+    x.strokeText(ttl, W / 2, W * 0.06); x.fillText(ttl, W / 2, W * 0.06);
     drawMarkers(x, (wx, wz) => [(wx - dg.ox) * sc, (wz - dg.oz) * sc], sc, true);
     return;
   }
@@ -1298,7 +1314,7 @@ function drawBigMap() {
     const known = S.inv?.wp?.includes(t.id);
     text(t.name, px, py - (t.id === 'town' ? W * 0.065 : W * 0.04), `700 ${Math.round(W * 0.022)}px "Grenze Gotisch", Georgia, serif`, known ? '#ffd27a' : '#b8a888');
   }
-  for (const D of world.dungeons) {
+  for (const D of world.entrances) {
     const [px, py] = toPx(D.ex, D.ez); const d = DUNGEONS[D.i];
     text('▼', px, py + W * 0.008, `${Math.round(W * 0.026)}px serif`, '#ff9a5a');
     text(d.name, px, py + W * 0.03, `600 ${Math.round(W * 0.014)}px "Alegreya Sans", sans-serif`, '#ffc8a0');
@@ -1638,7 +1654,7 @@ function updateLabels(tgt) {
   const now = performance.now() / 1000;
   for (const e of S.monsters.values()) {
     if (e.dying) continue;
-    const show = e === tgt || e.flags & 1 || (e.hp < 1000 && now - e.lastHurt < 6) || e.boss;
+    const show = e === tgt || e.flags & 1 || (e.hp < 1000 && (now - e.lastHurt < 6 || e.mine)) || e.boss;
     if (!show || e.boss) { e.label.style.display = 'none'; continue; }
     if (placeLabel(e.label, e.x, (e.rig.h || 2) * e.rig.root.scale.y + 0.3, e.z)) e.hpBar.style.width = `${(e.hp / 10).toFixed(1)}%`;
   }

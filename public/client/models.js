@@ -1,6 +1,6 @@
 // Low-poly models built from primitives, plus the static world (ground, trees, town).
 import * as THREE from 'three';
-import { DUNGEONS, DNG_TILE, DNG_TILES, zoneAt, roadDist, TOWN_R, BOSS_ARENA, BOSS_ARENA2, ARENAS, NPCS, TOWNS, TOWN_BY_ID, INNER_R, WORLD_R } from '../sim.js';
+import { DLEVELS, DNG_TILE, DNG_TILES, zoneAt, roadDist, TOWN_R, BOSS_ARENA, BOSS_ARENA2, ARENAS, NPCS, TOWNS, TOWN_BY_ID, INNER_R, WORLD_R } from '../sim.js';
 
 // ---------------------------------------------------------------- helpers
 const C = (c) => new THREE.Color(c);
@@ -383,7 +383,7 @@ function buildDungeons(scene, world, out) {
   const floorGeo = new THREE.BoxGeometry(DNG_TILE, 0.2, DNG_TILE); floorGeo.translate(0, -0.1, 0);
   const wallGeo = merge([part(new THREE.BoxGeometry(DNG_TILE, 2.6, DNG_TILE), '#ffffff', T(0, 1.3, 0)), part(new THREE.BoxGeometry(DNG_TILE + 0.06, 0.25, DNG_TILE + 0.06), '#9a9a9a', T(0, 2.68, 0))]);
   const sconce = merge([part(new THREE.BoxGeometry(0.16, 0.5, 0.16), '#2a2420', T(0, 1.9, 0)), part(new THREE.CylinderGeometry(0.16, 0.08, 0.22, 6), '#2a2420', T(0, 2.2, 0.1))]);
-  for (const d of DUNGEONS) {
+  for (const d of DLEVELS) {
     const D = world.dungeons[d.i], th = DTHEME[d.theme];
     // floor
     const tiles = []; for (let z = 0; z < DNG_TILES; z++) for (let x = 0; x < DNG_TILES; x++) if (D.floor[x + z * DNG_TILES]) tiles.push([x, z]);
@@ -429,6 +429,16 @@ function buildDungeons(scene, world, out) {
       g.position.set(o.x, 0, o.z); scene.add(g);
       out.lights.push({ x: o.x, y: 2, z: o.z, color: 0xbfe6ff, power: 0.8 });
       out.emitters.push({ x: o.x, y: 0.9, z: o.z, kind: 'waystone' });
+    }
+    if (o.k === 'ddown') {
+      const g = new THREE.Group();
+      g.add(mesh(new THREE.BoxGeometry(3.4, 0.25, 3.0), M('#3a3430'), 0, 0.12, 0));
+      g.add(mesh(new THREE.BoxGeometry(2.4, 0.27, 2.2), M('#050404'), 0, 0.13, 0));
+      for (let i = 0; i < 4; i++) g.add(mesh(new THREE.BoxGeometry(2.2, 0.08, 0.4), M('#4a4440'), 0, 0.24 - i * 0.05, 0.8 - i * 0.45));
+      const gl = glowSprite(0xff8a3a, 3.2, 0.55); gl.position.y = 0.4; g.add(gl);
+      g.position.set(o.x, 0, o.z); scene.add(g);
+      out.lights.push({ x: o.x, y: 1, z: o.z, color: 0xff8a3a, power: 0.8 });
+      out.emitters.push({ x: o.x, y: 0.3, z: o.z, kind: 'ember' });
     }
     if (o.k === 'dentr') {
       const g = new THREE.Group(); const st = M('#6a6460'), dk = M('#0a0808');
@@ -546,6 +556,12 @@ function biped(o) {
     weapon.add(mesh(new THREE.BoxGeometry(0.1, 0.06, 0.34), mk('#b48d55', { m: 0.6 }), 0, 0.1, 0));
     weapon.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.22, 5), mk('#4a2a1a'), 0, 0, 0));
     weapon.rotation.x = Math.PI / 2 - 0.25; hand.add(weapon);
+  } else if (W === 'wand') {
+    weapon = new THREE.Group();
+    weapon.add(mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.8, 5), mk('#d8d0bc'), 0, 0.3, 0));
+    weapon.add(mesh(new THREE.IcosahedronGeometry(0.12, 0), mk('#e8e0cc', { e: '#2a5a3a' }), 0, 0.75, 0));
+    const gl = glowSprite(o.orb || '#7affa0', 0.7, 0.7); gl.position.y = 0.8; weapon.add(gl);
+    weapon.rotation.x = Math.PI / 2 - 0.25; hand.add(weapon);
   } else if (W === 'axe') {
     weapon = new THREE.Group();
     weapon.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.9, 5), mk('#4a2a1a'), 0, 0.3, 0));
@@ -574,6 +590,8 @@ function biped(o) {
     const gl = glowSprite('#ffb04a', 1.2, 0.9); gl.position.set(0.12, 1.15, 0); weapon.add(gl);
     weapon.rotation.x = 0.1; hand.add(weapon);
   }
+  if (o.dual) { const d2w = new THREE.Group(); d2w.add(mesh(new THREE.BoxGeometry(0.06, 0.5, 0.12), mk(o.blade || '#c9ced6', { m: 0.7, r: 0.3 }), 0, 0.37, 0)); d2w.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.2, 5), mk('#2a1a14'), 0, 0.02, 0)); d2w.rotation.x = Math.PI / 2 - 0.25; lhand.add(d2w); }
+  if (o.mask) head.add(mesh(new THREE.BoxGeometry(0.4, 0.14, 0.1), mk(o.mask), 0, -0.07, 0.19));
   if (o.shield) { const sh = mesh(new THREE.BoxGeometry(0.08, 0.62, 0.5), mk(o.shield, { m: 0.3 }), -0.08, 0.05, 0.05); sh.rotation.x = 0.1; lhand.add(sh); const boss = mesh(new THREE.SphereGeometry(0.08, 6, 4), mk('#b48d55', { m: 0.6 }), -0.13, 0.05, 0.05); lhand.add(boss); }
   root.scale.setScalar(sc);
   for (const c of root.children) c.traverse?.((m) => { if (m.isMesh) m.castShadow = false; });
@@ -584,7 +602,10 @@ export const CLASS_LOOK = {
   mage: { skin: '#e2b897', torso: '#2c3f8a', arms: '#2c3f8a', legs: '#24336e', robe: true, belt: '#c9a23a', hat: 'wizard', hatC: '#22306a', weapon: 'staff', orb: '#7aa8ff', cape: '#1c2654' },
   ranger: { skin: '#cf9e78', torso: '#3d5a32', arms: '#5a4430', legs: '#4a3a2a', boots: '#3a2a1a', belt: '#2a1c12', hat: 'hood', hatC: '#2f4a28', weapon: 'bow', cape: '#2f4a28' },
 };
-export function makePlayerModel(cls) { return biped(CLASS_LOOK[cls]); }
+CLASS_LOOK.paladin = { skin: '#e0b090', torso: '#d8d4c8', arms: '#b8bcc6', legs: '#5a5650', boots: '#3a3430', tabard: '#e8c25a', belt: '#8a6a2a', pauldrons: '#e8d090', hat: 'helm', plume: '#f0e0a0', weapon: 'hammer', shield: '#d8b04a', cape: '#f0e8d0' };
+CLASS_LOOK.necro = { skin: '#c8c0b0', torso: '#1e2a24', arms: '#1e2a24', legs: '#141c18', robe: true, belt: '#6a8a6a', pauldrons: '#d8d0bc', hat: 'hood', hatC: '#182420', weapon: 'wand', orb: '#7affa0', eyes: '#7affa0', cape: '#101814' };
+CLASS_LOOK.assassin = { skin: '#c89a78', torso: '#2a2232', arms: '#2a2232', legs: '#201a28', boots: '#141018', belt: '#6a3a8a', hat: 'hood', hatC: '#1e1828', mask: '#3a2a4a', weapon: 'dagger', dual: true, blade: '#d0c8f0', cape: '#2a1a3a', thin: false };
+export function makePlayerModel(cls) { return biped(CLASS_LOOK[cls] || CLASS_LOOK.warrior); }
 const NPC_LOOK = {
   frost: { elder: { skin: '#e0b898', torso: '#5a6a7a', arms: '#8a96a4', legs: '#3a4450', boots: '#2a2420', pauldrons: '#c8d0da', hat: 'helm', plume: '#3a6a9a', weapon: 'sword', shield: '#3a5a7a', cape: '#e8eef4' },
     smith: { skin: '#d8a882', torso: '#8a7a64', arms: '#d8a882', legs: '#4a3a2a', boots: '#2a2018', apron: '#e8e0d0', bulk: true, hat: 'hood', hatC: '#c8c0b0', beard: '#c8a070', weapon: 'axe' } },
@@ -668,6 +689,8 @@ export function makeMonsterModel(type) {
     case 'drowned': return biped({ skin: '#6a8a80', torso: '#3a4a52', arms: '#6a8a80', legs: '#2e3a40', belt: '#5a4a2a', hat: 'hood', hatC: '#2a3a3a', longArms: true, hunch: 0.35, eyes: '#7affd8', weapon: 'dagger', blade: '#6a7a70' });
     case 'voidknight': return biped({ skin: '#2a2236', torso: '#2e2840', arms: '#3a3250', legs: '#241e30', pauldrons: '#6a4ab8', hat: 'helm', plume: '#b06aff', weapon: 'greatsword', blade: '#8a6ae0', bladeGlow: '#4a2a8a', shield: undefined, eyes: '#c08aff', cape: '#3a1a5a', scale: 1.3 });
     case 'shade': return biped({ skin: '#3a2a50', torso: '#2a1e3a', arms: '#3a2a50', legs: '#1e1430', robe: true, thin: true, hat: 'hood', hatC: '#1e1430', weapon: 'staff', orb: '#c08aff', eyes: '#e0b0ff', cape: '#2a1440' });
+    case 'skelpet': return biped({ skin: '#e0d8c4', torso: '#cfc8b4', arms: '#e0d8c4', legs: '#e0d8c4', boots: '#c0b8a4', thin: true, weapon: 'sword', blade: '#9aa8a0', shield: '#3a4a3a', eyes: '#7affa0', scale: 0.95 });
+    case 'magepet': return biped({ skin: '#e0d8c4', torso: '#2a3a30', arms: '#e0d8c4', legs: '#2a3a30', robe: true, thin: true, hat: 'hood', hatC: '#1e2a24', weapon: 'staff', orb: '#7affa0', eyes: '#7affa0', scale: 0.92 });
     case 'gobking': return biped({ skin: '#6f9a3a', torso: '#8a5a1a', arms: '#6f9a3a', legs: '#4a3a24', ears: true, bulk: true, hat: 'crown', weapon: 'axe', scale: 1.55, headScale: 1.3, eyes: '#ffdd33', hunch: 0.15, cape: '#7a2420' });
     case 'bonelord': return biped({ skin: '#e0d8c4', torso: '#3a2a44', arms: '#e0d8c4', legs: '#2a1e34', robe: true, thin: true, hat: 'crown', weapon: 'staff', orb: '#7aff9a', eyes: '#7aff9a', cape: '#24182e', scale: 1.9 });
     case 'icelord': return biped({ skin: '#cfe4f4', torso: '#dfeefa', arms: '#dfeefa', legs: '#b8cce0', boots: '#7a90a8', bulk: true, longArms: true, hunch: 0.3, hat: 'crown', eyes: '#5ad0ff', scale: 2.2 });
