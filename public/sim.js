@@ -71,6 +71,7 @@ export const TOWNS = [
 export const TOWN_BY_ID = Object.fromEntries(TOWNS.map((t) => [t.id, t]));
 export const isSafe = (zone) => !!(ZONES[zone] && ZONES[zone].safe);
 export function zoneAt(x, z) {
+  if (x > 300) { const d = DUNGEONS[Math.floor((x - DNG_X0 + 17) / DNG_STEP)]; return d ? d.id : 'town'; }
   for (const t of TOWNS) { const dx = x - t.x, dz = z - t.z; if (dx * dx + dz * dz < t.r * t.r) return t.id; }
   const r = Math.hypot(x, z);
   const q = Math.round(Math.atan2(z, x) / (Math.PI / 2));
@@ -80,6 +81,7 @@ export function zoneAt(x, z) {
 export function zoneLevel(x, z) {
   const zn = zoneAt(x, z); const zd = ZONES[zn];
   if (!zd.lv) return 0;
+  if (zd.dungeon) return zd.lv[0];
   const r = Math.hypot(x, z);
   const t = r < INNER_R ? clamp((r - 30) / 90, 0, 1) : clamp((r - 150) / 70, 0, 1);
   return Math.round(zd.lv[0] + t * (zd.lv[1] - zd.lv[0]));
@@ -100,6 +102,21 @@ export function roadDist(x, z) {
 export const BOSS_ARENA = { x: -118, z: 0, r: 14 };
 export const BOSS_ARENA2 = { x: -200, z: 0, r: 15 };
 export const ARENAS = [BOSS_ARENA, BOSS_ARENA2];
+
+// ---------------------------------------------------------------- dungeons
+// Each dungeon is built far east of the realm (x > 400), out of sight. Stairs in the
+// realm take you down; the stairs in the first room take you back up.
+export const DNG_X0 = 420, DNG_STEP = 130, DNG_Z0 = -48, DNG_CELL = 24, DNG_N = 4, DNG_TILE = 2, DNG_TILES = 48;
+export const DUNGEONS = [
+  { id: 'warren', name: 'Goblin Warren', zone: 'thorn', lv: [4, 6], mobs: ['goblin', 'shaman', 'spider'], boss: 'gobking', theme: 'earth', ang: 0.42, rad: 98 },
+  { id: 'catacombs', name: 'The Catacombs', zone: 'grave', lv: [7, 9], mobs: ['skeleton', 'archer', 'ghoul'], boss: 'bonelord', theme: 'bone', ang: Math.PI / 2 + 0.42, rad: 104 },
+  { id: 'depths', name: 'Frozen Depths', zone: 'frost', lv: [12, 14], mobs: ['frostwolf', 'yeti', 'wraith'], boss: 'icelord', theme: 'ice', ang: -Math.PI / 2 - 0.38, rad: 192 },
+  { id: 'molten', name: 'The Molten Deep', zone: 'ember', lv: [14, 16], mobs: ['imp', 'hound', 'brute'], boss: 'ashmaw', theme: 'lava', ang: 0.36, rad: 196 },
+  { id: 'temple', name: 'Sunken Temple', zone: 'mire', lv: [16, 18], mobs: ['drowned', 'lurker', 'horror'], boss: 'prophet', theme: 'moss', ang: Math.PI / 2 - 0.4, rad: 196 },
+];
+DUNGEONS.forEach((d, i) => { d.i = i; d.ox = DNG_X0 + i * DNG_STEP; d.oz = DNG_Z0; ZONES[d.id] = { name: d.name, lv: d.lv, dungeon: true, sub: 'Dungeon' }; });
+export const DUNGEON_BY_ID = Object.fromEntries(DUNGEONS.map((d) => [d.id, d]));
+export const dungeonAt = (x) => (x > 300 ? DUNGEONS[Math.floor((x - DNG_X0 + 17) / DNG_STEP)] || null : null);
 
 // ---------------------------------------------------------------- data: classes
 export const CLASSES = {
@@ -163,6 +180,12 @@ export const MONSTERS = {
   horror:     { name: 'Marsh Horror', short: 'Horror', hp: 150, dmg: 20, speed: 6, r: 1.1, range: 2.1, atkCd: 1.3, aggro: 9, xp: 1.9 },
   voidknight: { name: 'Void Knight', short: 'Knight', hp: 200, dmg: 24, speed: 5, r: 0.9, range: 2.2, atkCd: 1.5, aggro: 11, xp: 2.3 },
   shade:      { name: 'Shard Shade', short: 'Shade', hp: 90, dmg: 20, speed: 5.2, r: 0.6, range: 11, ranged: true, proj: 'void', pspeed: 18, atkCd: 2.0, aggro: 13, xp: 1.8 },
+  // dungeon lords
+  gobking:  { name: 'Gutrot, the Goblin King', short: 'Gutrot', hp: 5000, dmg: 28, speed: 5.2, r: 1.2, range: 2.6, atkCd: 1.5, aggro: 12, xp: 12, boss: true, mini: true, minions: ['goblin', 'shaman'], call: 'whistles for his warband' },
+  bonelord: { name: 'The Bone Matron', short: 'Matron', hp: 10000, dmg: 50, speed: 4.8, r: 1.3, range: 2.8, atkCd: 1.6, aggro: 12, xp: 18, boss: true, mini: true, minions: ['skeleton', 'ghoul'], call: 'raises her children from the floor' },
+  icelord:  { name: 'Hrimgar the Frozen', short: 'Hrimgar', hp: 24000, dmg: 105, speed: 5, r: 1.6, range: 3.0, atkCd: 1.7, aggro: 13, xp: 28, boss: true, mini: true, minions: ['frostwolf', 'wraith'], call: 'howls, and the pack answers' },
+  ashmaw:   { name: 'Ashmaw, the Molten Maw', short: 'Ashmaw', hp: 32000, dmg: 120, speed: 4.8, r: 1.7, range: 3.1, atkCd: 1.8, aggro: 13, xp: 34, boss: true, mini: true, minions: ['imp', 'hound'], call: 'roars, and the fire spits out more' },
+  prophet:  { name: 'The Drowned Prophet', short: 'Prophet', hp: 40000, dmg: 130, speed: 5, r: 1.5, range: 3.0, atkCd: 1.6, aggro: 13, xp: 40, boss: true, mini: true, minions: ['drowned', 'lurker'], call: 'calls the drowned up from the water' },
   boss2:      { name: 'Nharzul, the Shardbound', short: 'Nharzul', hp: 110000, dmg: 110, speed: 4.9, r: 1.9, range: 3.6, atkCd: 1.7, aggro: 16, xp: 70, boss: true, minions: ['voidknight', 'shade'] },
 };
 export const MONSTER_LIST = Object.keys(MONSTERS);
@@ -343,11 +366,27 @@ export const QUESTS = [
   { id: 's2', giver: 'fenwick', name: 'The Shardbound', lvl: 18, zone: 'spire', goal: { kill: ['boss2'], n: 1 }, reward: { xp: 20000, gold: 3000, item: { r: 4 } },
     text: 'Nharzul. A star fell, and something climbed out of it, and wore the shards like a crown. It is the reason the dead walk and the mountains burn. End it. Take everyone you trust.',
     done: 'The stars look right again. I have kept this for whoever finished the job. I never thought it would be someone I had met.' },
+  // dungeons (side quests: they do not block the main chain)
+  { id: 'd1', giver: 'maren', side: true, prev: 'q3', name: 'Down the Goblin Hole', lvl: 5, zone: 'warren', goal: { kill: ['gobking'], n: 1 }, reward: { xp: 900, gold: 160, item: { r: 2 } },
+    text: 'The goblins did not just camp in Thornwood. They dug. There is a hole in the east of the wood, and stairs going down, and at the bottom sits a goblin who calls himself a king. Find the Goblin Warren and end his reign.',
+    done: 'A goblin king. They will need a few years to find another one that fat. Here, you earned this.' },
+  { id: 'd2', giver: 'maren', side: true, prev: 'q5', name: 'Beneath the Graves', lvl: 8, zone: 'catacombs', goal: { kill: ['bonelord'], n: 1 }, reward: { xp: 2200, gold: 260, item: { r: 2 } },
+    text: 'Under the Ashen Graveyard lie the old catacombs. The gravediggers say something down there sings to the bones, and the bones sing back. Go down the stairs in the graveyard and silence the Bone Matron.',
+    done: 'The singing has stopped. I did not like that song. Take this, and wash your hands.' },
+  { id: 'd3', giver: 'hilde', side: true, prev: 'f1', name: 'The Frozen Depths', lvl: 13, zone: 'depths', goal: { kill: ['icelord'], n: 1 }, reward: { xp: 5600, gold: 650, item: { r: 3 } },
+    text: 'There is a cave in the west of Frostpeak where the ice never melts. Hrimgar sleeps at the bottom of it, and the cold comes from him. Wake him up. Then put him to sleep for good.',
+    done: 'The wind has turned warm for the first time in a month. Thank you.' },
+  { id: 'd4', giver: 'tamsin', side: true, prev: 'e1', name: 'Into the Molten Deep', lvl: 15, zone: 'molten', goal: { kill: ['ashmaw'], n: 1 }, reward: { xp: 7800, gold: 850, item: { r: 3 } },
+    text: 'The fire under Emberwaste has a mouth, and the mouth has a name: Ashmaw. The stairs down are south of the road. Bring water. Bring friends. Bring it down.',
+    done: 'Ashmaw is dead and my forge burns cleaner already. This one I made with the heat it left behind.' },
+  { id: 'd5', giver: 'fenwick', side: true, prev: 'm1', name: 'The Sunken Temple', lvl: 17, zone: 'temple', goal: { kill: ['prophet'], n: 1 }, reward: { xp: 10500, gold: 1250, item: { r: 3 } },
+    text: 'There was a temple here before the marsh. It sank, and its prophet sank with it, and he has been preaching to the drowned ever since. The steps down are in the west of the marsh. Close his mouth.',
+    done: 'No more sermons from under the water. I can row in peace again. Here, for your trouble.' },
 ];
 // each quest unlocks after the giver's previous one
 for (const g of new Set(QUESTS.map((q) => q.giver))) {
   let prev = null;
-  for (const q of QUESTS) if (q.giver === g && !q.repeat) { if (!('prev' in q)) q.prev = prev; prev = q.id; }
+  for (const q of QUESTS) if (q.giver === g && !q.repeat && !q.side) { if (!('prev' in q)) q.prev = prev; prev = q.id; }
 }
 export const QUEST_BY_ID = Object.fromEntries(QUESTS.map((q) => [q.id, q]));
 export function questState(pq, q) {
@@ -458,6 +497,7 @@ export class World {
     this.obs = [];      // colliding + decorative objects that both sides know about
     this.camps = [];
     this.props = [];    // breakables: no collision, the game tracks which are broken
+    this.dungeons = [];
     this.grid = new Grid(8);
     this._tmp = [];
     this.generate();
@@ -547,12 +587,25 @@ export class World {
       this.addObs({ k: 'ridge', x: Math.cos(a) * rad, z: Math.sin(a) * rad, r: sc, s: sc, rot: R() * 6 });
     }
 
+    // --- dungeon entrances (stairs going down), placed before anything else can block them
+    const nearTown = (x, z, gap) => TOWNS.some((t) => d2(x, z, t.x, t.z) < (t.r + gap) * (t.r + gap));
+    const nearArena = (x, z, gap) => ARENAS.some((a) => d2(x, z, a.x, a.z) < (a.r + gap) * (a.r + gap));
+    const nearEntr = (x, z, gap) => this.dungeons.some((d) => d2(x, z, d.ex, d.ez) < gap * gap);
+    for (const d of DUNGEONS) {
+      let ex = 0, ez = 0;
+      for (let t = 0; t < 400; t++) {
+        const a = d.ang + rr(-0.12, 0.12), rad = d.rad + rr(-8, 8);
+        ex = Math.cos(a) * rad; ez = Math.sin(a) * rad;
+        if (zoneAt(ex, ez) === d.zone && roadDist(ex, ez) > 7 && this.free(ex, ez, 6) && !nearTown(ex, ez, 10) && !nearArena(ex, ez, 10)) break;
+      }
+      this.addObs({ k: 'dentr', x: ex, z: ez, box: true, hw: 2.4, hd: 1.5, dng: d.i });
+      this.dungeons.push({ i: d.i, ex, ez });
+    }
+
     // --- camps
     const campDefs = { meadow: 14, thorn: 14, grave: 14, crypt: 7, frost: 12, ember: 12, mire: 12, spire: 9 };
     const qAngle = { thorn: 0, grave: Math.PI / 2, crypt: Math.PI, meadow: -Math.PI / 2, ember: 0, mire: Math.PI / 2, spire: Math.PI, frost: -Math.PI / 2 };
     const OUTER = { frost: 1, ember: 1, mire: 1, spire: 1 };
-    const nearTown = (x, z, gap) => TOWNS.some((t) => d2(x, z, t.x, t.z) < (t.r + gap) * (t.r + gap));
-    const nearArena = (x, z, gap) => ARENAS.some((a) => d2(x, z, a.x, a.z) < (a.r + gap) * (a.r + gap));
     let campId = 0;
     for (const zn in campDefs) {
       let made = 0, tries = 0;
@@ -562,7 +615,7 @@ export class World {
         const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
         if (zoneAt(x, z) !== zn) continue;
         if (roadDist(x, z) < 6) continue;
-        if (nearArena(x, z, 12) || nearTown(x, z, 14)) continue;
+        if (nearArena(x, z, 12) || nearTown(x, z, 14) || nearEntr(x, z, 14)) continue;
         if (this.camps.some((c) => d2(c.x, c.z, x, z) < 17 * 17)) continue;
         if (!this.free(x, z, 3)) continue;
         const lvl = zoneLevel(x, z);
@@ -603,7 +656,7 @@ export class World {
         if (zoneAt(x, z) !== zn) continue;
         if (roadDist(x, z) < roadGap) continue;
         if (this.camps.some((c) => d2(c.x, c.z, x, z) < campGap * campGap)) continue;
-        if (nearArena(x, z, 3) || nearTown(x, z, 4)) continue;
+        if (nearArena(x, z, 3) || nearTown(x, z, 4) || nearEntr(x, z, 7)) continue;
         if (rad > 140 && rad < 154) continue;
         const kd = kinds[Math.floor(R() * kinds.length)];
         const s = rr(kd.s[0], kd.s[1]);
@@ -628,7 +681,109 @@ export class World {
       const s = rr(3.5, 7);
       this.addObs({ k: 'cliff', x: Math.cos(a) * rad, z: Math.sin(a) * rad, r: s, s, rot: R() * 6, c: false });
     }
-    this.generateProps(R, nearTown, nearArena);
+    this.generateProps(R, (x, z, g) => nearTown(x, z, g) || nearEntr(x, z, 5), nearArena);
+    for (const d of DUNGEONS) this.generateDungeon(d, mulberry32(this.seed + 101 * (d.i + 1)));
+  }
+  // A dungeon: a chain of rooms on a 4x4 grid of cells, joined by corridors, with a lord in the last room.
+  generateDungeon(d, R) {
+    const rr = (a, b) => a + R() * (b - a), ri = (a, b) => Math.floor(rr(a, b + 1));
+    const N = DNG_N, CT = DNG_CELL / DNG_TILE, T = DNG_TILES;
+    const D = this.dungeons[d.i];
+    // longest random path through the cells (depth-first, keep the best)
+    let best = [];
+    const start = [0, ri(0, N - 1)];
+    const walk = (path, seen) => {
+      if (path.length > best.length) best = path.slice();
+      if (best.length >= 7) return;
+      const [cx, cz] = path[path.length - 1];
+      const dirs = [[1, 0], [0, 1], [0, -1], [-1, 0]].sort(() => R() - 0.5);
+      for (const [dx, dz] of dirs) {
+        const nx = cx + dx, nz = cz + dz, k = nx + nz * N;
+        if (nx < 0 || nz < 0 || nx >= N || nz >= N || seen.has(k)) continue;
+        seen.add(k); path.push([nx, nz]); walk(path, seen); path.pop(); seen.delete(k);
+        if (best.length >= 7) return;
+      }
+    };
+    walk([start], new Set([start[0] + start[1] * N]));
+    const used = new Set(best.map(([x, z]) => x + z * N));
+    const rooms = best.map(([cx, cz], i) => ({ cx, cz, kind: i === 0 ? 'start' : i === best.length - 1 ? 'boss' : 'fight', from: i ? i - 1 : -1 }));
+    // two side rooms branching off the path
+    for (let k = 0; k < 2; k++) {
+      for (let t = 0; t < 30; t++) {
+        const pi = ri(1, rooms.length - 2), b = rooms[pi];
+        const [dx, dz] = [[1, 0], [0, 1], [0, -1], [-1, 0]][ri(0, 3)];
+        const nx = b.cx + dx, nz = b.cz + dz, key = nx + nz * N;
+        if (nx < 0 || nz < 0 || nx >= N || nz >= N || used.has(key)) continue;
+        used.add(key); rooms.push({ cx: nx, cz: nz, kind: 'side', from: pi }); break;
+      }
+    }
+    const floor = new Uint8Array(T * T);
+    const dig = (x0, z0, x1, z1) => { for (let z = Math.max(1, Math.min(z0, z1)); z <= Math.min(T - 2, Math.max(z0, z1)); z++) for (let x = Math.max(1, Math.min(x0, x1)); x <= Math.min(T - 2, Math.max(x0, x1)); x++) floor[x + z * T] = 1; };
+    for (const r of rooms) {
+      const w = r.kind === 'boss' ? 10 : r.kind === 'start' ? 6 : ri(6, 8), h = r.kind === 'boss' ? 10 : r.kind === 'start' ? 6 : ri(6, 8);
+      const x0 = r.cx * CT + Math.floor((CT - w) / 2) + (r.kind === 'boss' ? 0 : ri(-1, 1)), z0 = r.cz * CT + Math.floor((CT - h) / 2) + (r.kind === 'boss' ? 0 : ri(-1, 1));
+      Object.assign(r, { x0, z0, x1: x0 + w - 1, z1: z0 + h - 1, tx: x0 + (w - 1) / 2, tz: z0 + (h - 1) / 2 });
+      dig(r.x0, r.z0, r.x1, r.z1);
+    }
+    // corridors, two tiles wide
+    for (const r of rooms) {
+      if (r.from < 0) continue;
+      const a = rooms[r.from];
+      const ax = Math.round(a.tx), az = Math.round(a.tz), bx = Math.round(r.tx), bz = Math.round(r.tz);
+      dig(ax, az, bx, az + 1); dig(bx, az, bx + 1, bz);
+    }
+    const wx = (tx) => d.ox + tx * DNG_TILE + DNG_TILE / 2, wz = (tz) => d.oz + tz * DNG_TILE + DNG_TILE / 2;
+    // walls wherever a solid tile touches the floor
+    const isF = (x, z) => x >= 0 && z >= 0 && x < T && z < T && floor[x + z * T] === 1;
+    for (let z = 0; z < T; z++) for (let x = 0; x < T; x++) {
+      if (isF(x, z)) continue;
+      let edge = false;
+      for (let dz = -1; dz <= 1 && !edge; dz++) for (let dx = -1; dx <= 1; dx++) if (isF(x + dx, z + dz)) { edge = true; break; }
+      if (edge) this.addObs({ k: 'dwall', box: true, x: wx(x), z: wz(z), hw: DNG_TILE / 2, hd: DNG_TILE / 2, dng: d.i, tx: x, tz: z });
+    }
+    D.floor = floor; D.rooms = rooms;
+    const st = rooms[0], boss = rooms.find((r) => r.kind === 'boss');
+    D.sx = wx(st.tx); D.sz = wz(st.tz) + 2;
+    this.addObs({ k: 'dexit', x: wx(st.tx), z: wz(st.tz) - 2, r: 0.9, dng: d.i });
+    this.addObs({ k: 'dexit', x: wx(boss.x1) - 1, z: wz(boss.z0) + 1, r: 0.9, dng: d.i, late: 1 });
+    // torches on the north walls, pillars in the big hall
+    for (const r of rooms) {
+      const n = r.kind === 'boss' ? 4 : 2;
+      for (let k = 0; k < n; k++) { const tx = r.x0 + Math.round((k + 0.5) * (r.x1 - r.x0) / n); if (!isF(tx, r.z0 - 1)) this.addObs({ k: 'wtorch', x: wx(tx), z: wz(r.z0) - 0.75, r: 0.2, c: false, dng: d.i }); }
+    }
+    for (const [fx, fz] of [[0.22, 0.22], [0.78, 0.22], [0.22, 0.78], [0.78, 0.78]]) this.addObs({ k: 'pillar', x: wx(boss.x0 + (boss.x1 - boss.x0) * fx), z: wz(boss.z0 + (boss.z1 - boss.z0) * fz), r: 0.9, h: 3.2, dng: d.i });
+    // monsters, loot and a lord
+    const fights = rooms.filter((r) => r.kind === 'fight' || r.kind === 'side');
+    const lvlAt = (r) => { const i = rooms.indexOf(r); const prog = r.kind === 'side' ? rooms[r.from] && rooms.indexOf(rooms[r.from]) / (best.length - 1) : i / (best.length - 1); return Math.round(d.lv[0] + clamp(prog || 0, 0, 1) * (d.lv[1] - d.lv[0])); };
+    let campId = 1000 + d.i * 100;
+    const inRoom = (r, pad) => [wx(rr(r.x0 + pad, r.x1 - pad)), wz(rr(r.z0 + pad, r.z1 - pad))];
+    for (const r of fights) {
+      const lvl = lvlAt(r); const cx = wx(r.tx), cz = wz(r.tz);
+      const camp = { id: campId++, x: cx, z: cz, zone: d.id, lvl, mem: [] };
+      const n = 3 + ri(0, 2);
+      for (let i = 0; i < n; i++) { const [x, z] = inRoom(r, 1.2); camp.mem.push({ type: d.mobs[ri(0, d.mobs.length - 1)], lvl, ox: x - cx, oz: z - cz }); }
+      this.camps.push(camp);
+    }
+    {
+      const lvl = d.lv[1]; const cx = wx(boss.tx), cz = wz(boss.tz) - 2;
+      this.camps.push({ id: campId++, x: cx, z: cz, zone: d.id, lvl, boss: true, mem: [{ type: d.boss, lvl, ox: 0, oz: 0 }] });
+      const strong = d.mobs[d.mobs.length - 1];
+      this.camps.push({ id: campId++, x: cx, z: cz + 4, zone: d.id, lvl, mem: [{ type: strong, lvl, ox: -3, oz: 0 }, { type: strong, lvl, ox: 3, oz: 0 }] });
+    }
+    const PK = { earth: ['barrel', 'crate', 'urn'], bone: ['urn', 'bones', 'sarc'], ice: ['bones', 'crate', 'urn'], lava: ['urn', 'bones', 'barrel'], moss: ['urn', 'sarc', 'bones'] }[d.theme];
+    const addProp = (k, x, z, lvl) => this.props.push({ id: this.props.length, k, x, z, zone: d.id, lvl, rot: R() * Math.PI * 2 });
+    for (const r of rooms) {
+      if (r.kind === 'start') continue;
+      const lvl = lvlAt(r);
+      const n = r.kind === 'boss' ? 4 : ri(2, 4);
+      for (let i = 0; i < n; i++) {
+        // along the walls, out of the way
+        const side = ri(0, 3);
+        const x = side === 0 ? r.x0 : side === 1 ? r.x1 : rr(r.x0 + 1, r.x1 - 1), z = side === 2 ? r.z0 : side === 3 ? r.z1 : rr(r.z0 + 1, r.z1 - 1);
+        addProp(PK[ri(0, PK.length - 1)], wx(x), wz(z), lvl);
+      }
+      if (r.kind === 'boss' || (r.kind === 'side' && R() < 0.7)) addProp('trove', wx(r.tx) + (r.kind === 'boss' ? 0 : 0), wz(r.kind === 'boss' ? r.z0 + 1 : r.tz), lvl);
+    }
   }
   generateProps(R, nearTown, nearArena) {
     const rr = (a, b) => a + R() * (b - a);
@@ -696,7 +851,7 @@ export class World {
         }
       }
       const r = Math.hypot(x, z);
-      if (r > WORLD_R) { x *= WORLD_R / r; z *= WORLD_R / r; }
+      if (r > WORLD_R && x < 300) { x *= WORLD_R / r; z *= WORLD_R / r; }
     }
     return [x, z];
   }
@@ -863,6 +1018,8 @@ export class Game {
       case 'stash': return this.stashMove(p, m.a, num(m.i, -1) | 0);
       case 'travel': return this.travel(p, m.to);
       case 'smash': return this.smashProp(p, num(m.id, -1) | 0);
+      case 'enter': return this.enterDungeon(p, num(m.d, -1) | 0);
+      case 'leave': return this.leaveDungeon(p);
       case 'quest': return this.questAction(p, m.a, m.q);
       case 'chat': {
         const text = String(m.m || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 160);
@@ -941,6 +1098,23 @@ export class Game {
     this.to(p.id, { t: 'sold', g: gold, n: it.name, r: it.r, d: discard ? 1 : 0 });
     this.sendInv(p);
   }
+  // ---------- dungeons
+  enterDungeon(p, i) {
+    const d = DUNGEONS[i], D = this.world.dungeons[i];
+    if (!d || !p.alive || d2(p.x, p.z, D.ex, D.ez) > 6.5 * 6.5) return;
+    if (p.lvl < d.lv[0] - 2) this.note(p, `${d.name} is meant for level ${d.lv[0]}–${d.lv[1]}. Tread carefully.`, 'warn');
+    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+    p.x = D.sx + rnd(-1, 1); p.z = D.sz + rnd(0, 1); p.grace = 9999; p.graceUntil = this.now + 1.5;
+    this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1, dng: i });
+  }
+  leaveDungeon(p) {
+    const d = dungeonAt(p.x); if (!d || !p.alive) return;
+    if (!this.world.obs.some((o) => o.k === 'dexit' && o.dng === d.i && d2(o.x, o.z, p.x, p.z) < 5 * 5)) return;
+    const D = this.world.dungeons[d.i];
+    p.x = D.ex + rnd(-1, 1); p.z = D.ez + 3.5 + rnd(0, 0.5); p.grace = 9999; p.graceUntil = this.now + 1.5;
+    this.to(p.id, { t: 'setpos', x: p.x, z: p.z, travel: 1 });
+    this.ev(p.x, p.z, { e: 'fx', k: 'travel', i: p.id, x: p.x, z: p.z });
+  }
   // ---------- breakables
   smashProp(p, id, fromHit = false) {
     const pr = this.world.props[id];
@@ -966,7 +1140,7 @@ export class Game {
     if (Math.random() < (big ? 0.45 : 0.12)) item(rollRarity());
     // some coffins and bone piles were not empty
     if ((big && Math.random() < 0.35) || (pr.k === 'bones' && Math.random() < 0.12)) {
-      const type = AMBUSH[pr.zone] || 'skeleton';
+      const type = AMBUSH[pr.zone] || DUNGEON_BY_ID[pr.zone]?.mobs[0] || 'skeleton';
       const n = big ? 2 : 1;
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -1211,15 +1385,18 @@ export class Game {
       if (!m.minion || m.ambush) this.dropLoot(m, p);
     }
     if (m.def.boss) {
-      this.sys(`${m.name} has fallen!`);
-      for (const o of this.monsters) if (o.minion && !o.dead) { o.dead = true; o.deadAt = this.now; this.ev(o.x, o.z, { e: 'die', i: o.id, x: o.x, z: o.z }); }
+      if (m.def.mini) { for (const p of this.players.values()) if (d2(p.x, p.z, m.x, m.z) < 60 * 60) this.note(p, `${m.name} has fallen!`); }
+      else this.sys(`${m.name} has fallen!`);
+      for (const o of this.monsters) if (o.minion && o.master === m && !o.dead) { o.dead = true; o.deadAt = this.now; this.ev(o.x, o.z, { e: 'die', i: o.id, x: o.x, z: o.z }); }
     }
     m.threat.clear();
   }
   dropLoot(m, p) {
     const drops = [];
     const boss = m.def.boss;
-    if (boss) {
+    if (boss && m.def.mini) {
+      for (let i = 0; i < 2; i++) drops.push(Math.random() < 0.1 ? 4 : Math.random() < 0.5 ? 3 : 2);
+    } else if (boss) {
       for (let i = 0; i < 3; i++) drops.push(Math.random() < 0.3 ? 4 : Math.random() < 0.6 ? 3 : 2);
     } else if (m.champion) {
       drops.push(rollRarity(1)); if (Math.random() < 0.5) drops.push(rollRarity(1));
@@ -1228,7 +1405,7 @@ export class Game {
       const it = makeItem(m.lvl, r, null, p.cls);
       this.addLoot(p, m.x, m.z, { item: it });
     }
-    if (Math.random() < (boss ? 1 : m.champion ? 0.9 : 0.55)) this.addLoot(p, m.x, m.z, { gold: Math.max(1, Math.round(m.lvl * rnd(2, 5) * (m.champion ? 4 : 1) * (boss ? 25 : 1))) });
+    if (Math.random() < (boss ? 1 : m.champion ? 0.9 : 0.55)) this.addLoot(p, m.x, m.z, { gold: Math.max(1, Math.round(m.lvl * rnd(2, 5) * (m.champion ? 4 : 1) * (boss ? (m.def.mini ? 10 : 25) : 1))) });
     if (Math.random() < (m.champion ? 0.5 : 0.07)) this.addLoot(p, m.x, m.z, { pot: 1 });
   }
   addLoot(p, x, z, o) {
@@ -1247,7 +1424,8 @@ export class Game {
       let n = 0; for (const o of this.players.values()) if (o.alive && d2(o.x, o.z, m.x, m.z) < 45 * 45) n++;
       m.mhp = Math.round(m.def.hp * (1 + 0.8 * (Math.max(1, n) - 1))); m.hp = m.mhp;
       m.sp = { slam: this.now + 6, spikes: this.now + 11, sum60: false, sum30: false };
-      this.sys(`${m.name} awakens!`);
+      if (m.def.mini) { for (const p of this.players.values()) if (d2(p.x, p.z, m.x, m.z) < 60 * 60) this.note(p, `${m.name} awakens!`, 'warn'); }
+      else this.sys(`${m.name} awakens!`);
     }
     m.state = 'chase';
     if (alertCamp) for (const o of this.monsters) {
@@ -1324,7 +1502,7 @@ export class Game {
     const leash = m.def.boss ? 30 : 32;
     if (!tgt || d2(m.x, m.z, m.sx, m.sz) > leash * leash) {
       m.state = 'return'; m.threat.clear(); m.frozenUntil = m.stunUntil = 0;
-      if (m.def.boss) { for (const o of this.monsters) if (o.minion && !o.dead) { o.dead = true; o.deadAt = now; } }
+      if (m.def.boss) { for (const o of this.monsters) if (o.minion && o.master === m && !o.dead) { o.dead = true; o.deadAt = now; } }
       this.ev(m.x, m.z, { e: 'evade', i: m.id });
       return;
     }
@@ -1381,16 +1559,18 @@ export class Game {
       }
     }
     const frac = m.hp / m.mhp;
-    for (const [key, at] of [['sum60', 0.6], ['sum30', 0.3]]) {
+    for (const [key, at] of m.def.mini ? [['sum50', 0.5]] : [['sum60', 0.6], ['sum30', 0.3]]) {
       if (!sp[key] && frac < at) {
         sp[key] = true;
         this.ev(m.x, m.z, { e: 'fx', k: 'summon', x: m.x, z: m.z });
-        this.sys(`${m.def.short} calls his dead to his side!`);
-        for (let i = 0; i < 4; i++) {
-          const a = (i / 4) * Math.PI * 2;
+        if (m.def.mini) { for (const p of near) this.note(p, `${m.def.short} ${m.def.call}!`, 'warn'); }
+        else this.sys(`${m.def.short} calls his dead to his side!`);
+        const cnt = m.def.mini ? 3 : 4;
+        for (let i = 0; i < cnt; i++) {
+          const a = (i / cnt) * Math.PI * 2;
           const [x, z] = this.world.resolve(m.x + Math.cos(a) * 4, m.z + Math.sin(a) * 4, 0.6);
           const mins = m.def.minions || ['skeleton', 'archer'];
-          const mm = this.spawnMonster(mins[i % 2], m.lvl - 1, x, z, m.camp, true);
+          const mm = this.spawnMonster(mins[i % 2], m.lvl - 1, x, z, m.camp, true); mm.master = m;
           this.aggro(mm, pick(near), false);
         }
       }
@@ -1544,6 +1724,8 @@ export class Game {
           }
         }
         if (pr.trav >= pr.range) done = true;
+        // dungeon walls stop shots
+        if (!done && pr.x > 300 && !this.world.free(pr.x, pr.z, 0.05, 0)) done = true;
       }
       if (done) this.ev(pr.x, pr.z, { e: 'pe', i: pr.id, x: r2(pr.x), z: r2(pr.z) });
       else keep.push(pr);

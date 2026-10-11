@@ -103,6 +103,8 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
 .lbl.champ { color: #8fb6ff; }
 .lbl.obj { color: #bfe6ff; font-size: 12px; pointer-events: auto; cursor: pointer; padding: 2px 6px; }
 .lbl.obj:hover { color: #fff; }
+.lbl.obj.dng { color: #ffb08a; font-size: 13px; }
+.lbl.obj .t { display: block; color: var(--ash); font-weight: 500; font-size: 11px; font-style: italic; }
 .lbl.npc .t { display: block; color: var(--ash); font-weight: 500; font-size: 11px; font-style: italic; }
 .loot { pointer-events: auto; cursor: pointer; padding: 1px 7px; background: rgba(8,6,10,.82); border: 1px solid rgba(255,255,255,.08); font-size: 12.5px; border-radius: 2px; }
 .loot:hover { background: rgba(40,30,20,.95); border-color: currentColor; }
@@ -419,6 +421,7 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
     </dl>
     <p class="say" style="font-style:normal">Talk to <b>Elder Maren</b> (gold “!” above her head) for quests and to <b>Borin</b> to trade. The fountain in town heals you. Enemies with a blue glow are champions: tougher, with better loot. Everyone near a kill gets their own loot and full experience, so group up.</p>
     <p class="say" style="font-style:normal">After level 10, cross the ridge to the <b>outer lands</b>. Three more towns wait there: <b>Frosthaven</b> (north), <b>Cinderwatch</b> (east) and <b>Mirebrook</b> (south), each with new quests and a trader with better wares. Every town has a <b>chest</b> for storing items and a <b>waystone</b> for fast travel. You rise again in the last town you visited.</p>
+    <p class="say" style="font-style:normal"><b>Dungeons:</b> five stairways lead underground (look for ▼ on the map): the Goblin Warren in Thornwood, the Catacombs under the graveyard, the Frozen Depths, the Molten Deep and the Sunken Temple. Fight through the rooms to the lord at the bottom, who guards a treasure chest. The stairs in the first room take you back up.</p>
     <div class="opts">
       <button class="btn ghost" id="opt-sound"></button>
       <button class="btn ghost" id="opt-music"></button>

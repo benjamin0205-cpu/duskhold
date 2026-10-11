@@ -4,11 +4,11 @@ import {
   Game, World, CLASSES, CLASS_LIST, MONSTERS, MONSTER_LIST, ZONES, zoneAt, zoneLevel, QUESTS, QUEST_BY_ID, questState, npcMarker,
   NPCS, SLOTS, SLOT_NAMES, RARITY, RARITY_COLORS, AFFIX, computeStats, xpNeed, PLAYER_R, TOWN_R, BOSS_ARENA, MAX_LEVEL, POTION_COST,
   gambleCost, INV_SIZE, TICK, WORLD_R, ROADS, roadWiggle, TOWNS, TOWN_BY_ID, isSafe, SHOPS, SHOP_INFO, NPC_BY_ID,
-  BOSS_ARENA2, INV_MAX, STASH_MAX, INNER_R, PROPS,
+  BOSS_ARENA2, INV_MAX, STASH_MAX, INNER_R, PROPS, DUNGEONS, dungeonAt, DNG_TILE, DNG_TILES,
 } from '../sim.js';
 import { sfx, initAudio, setSound, setMusic } from './audio.js';
 import { paintAbility, drawItemInto } from './icons.js';
-import { buildWorld, buildProps, makePlayerModel, makeNpcModel, makeMonsterModel, makeLootModel, glowSprite, groundColor, CLASS_LOOK } from './models.js';
+import { buildWorld, buildProps, DTHEME, makePlayerModel, makeNpcModel, makeMonsterModel, makeLootModel, glowSprite, groundColor, CLASS_LOOK } from './models.js';
 import { Particles, Projectiles, Telegraphs, Rings, Swooshes, FloatText } from './fx.js';
 
 const $ = (id) => document.getElementById(id);
@@ -225,10 +225,12 @@ for (const n of NPCS) {
 }
 const propLabel = makeLabel('obj prop'); propLabel.style.display = 'none'; propLabel.style.pointerEvents = 'none';
 // chests and waystones you can click
-S.objs = world.obs.filter((o) => o.k === 'chest' || o.k === 'waystone').map((o) => {
-  const label = makeLabel('obj'); label.textContent = o.k === 'chest' ? 'Chest' : 'Waystone';
+S.objs = world.obs.filter((o) => o.k === 'chest' || o.k === 'waystone' || o.k === 'dentr' || o.k === 'dexit').map((o) => {
+  const label = makeLabel('obj' + (o.k === 'dentr' ? ' dng' : ''));
+  if (o.k === 'dentr') { const d = DUNGEONS[o.dng]; label.innerHTML = `${esc(d.name)}<span class="t">Dungeon · level ${d.lv[0]}–${d.lv[1]}</span>`; }
+  else label.textContent = o.k === 'chest' ? 'Chest' : o.k === 'waystone' ? 'Waystone' : 'Stairs up';
   label.onpointerdown = (ev) => { ev.stopPropagation(); if (ev.button === 0) goToObj(obj); };
-  const obj = { k: o.k, x: o.x, z: o.z, town: o.town, label };
+  const obj = { k: o.k, x: o.x, z: o.z, town: o.town, dng: o.dng, label };
   return obj;
 });
 const markerTex = {};
@@ -432,7 +434,7 @@ function onEvent(e) {
     case 'matk': {
       const m = S.monsters.get(e.i); if (!m) return;
       m.atk = m.atkDur = e.big ? 1.2 : 0.4;
-      if (m.boss && e.big) ftext.add(m.x, 5.5, m.z, m.type === 'boss2' ? 'Shard Storm!' : 'Grave Slam!', 'info', { dur: 1.4 });
+      if (m.boss && e.big) ftext.add(m.x, 5.5, m.z, m.type === 'boss2' ? 'Shard Storm!' : m.type === 'boss' ? 'Grave Slam!' : 'Slam!', 'info', { dur: 1.4 });
       return;
     }
     case 'ps': projs.spawn(e); if (e.t === 1) { /* player shot */ } return;
@@ -509,25 +511,30 @@ function playCastVisual(p, slot, ang, v = 1) {
 }
 
 // ================================================================ pathfinding
-const GN = 480, GO = 240;
-let walk = null;
-function buildPathGrid() {
-  if (walk) return;
-  walk = new Uint8Array(GN * GN);
-  for (let j = 0; j < GN; j++) for (let i = 0; i < GN; i++) {
-    const x = i - GO + 0.5, z = j - GO + 0.5;
-    walk[j * GN + i] = Math.hypot(x, z) < WORLD_R - 0.5 && world.free(x, z, PLAYER_R * 0.85, 0.02) ? 1 : 0;
+// One walk grid for the realm, and one per dungeon (built the first time you go down).
+const OVER = { ox: -240, oz: -240, n: 480, walk: null };
+const DGRID = DUNGEONS.map((d) => ({ ox: d.ox, oz: d.oz, n: DNG_TILES * DNG_TILE, walk: null }));
+let PG = OVER; // the grid in use
+function buildGrid(G) {
+  if (G.walk) return;
+  G.walk = new Uint8Array(G.n * G.n);
+  for (let j = 0; j < G.n; j++) for (let i = 0; i < G.n; i++) {
+    const x = i + G.ox + 0.5, z = j + G.oz + 0.5;
+    G.walk[j * G.n + i] = (G === OVER ? Math.hypot(x, z) < WORLD_R - 0.5 : true) && world.free(x, z, PLAYER_R * 0.85, 0.02) ? 1 : 0;
   }
 }
-const cellOf = (x, z) => [Math.floor(x + GO), Math.floor(z + GO)];
-const walkable = (i, j) => i >= 0 && j >= 0 && i < GN && j < GN && walk[j * GN + i] === 1;
+function buildPathGrid() { buildGrid(OVER); }
+function gridAt(x) { const d = dungeonAt(x); return d ? DGRID[d.i] : OVER; }
+const cellOf = (x, z) => [Math.floor(x - PG.ox), Math.floor(z - PG.oz)];
+const walkable = (i, j) => i >= 0 && j >= 0 && i < PG.n && j < PG.n && PG.walk[j * PG.n + i] === 1;
 function lineClear(x1, z1, x2, z2) {
   const d = Math.hypot(x2 - x1, z2 - z1); const n = Math.ceil(d / 0.35);
   for (let k = 1; k < n; k++) { const t = k / n; const [i, j] = cellOf(lerp(x1, x2, t), lerp(z1, z2, t)); if (!walkable(i, j)) return false; }
   return true;
 }
 function findPath(x1, z1, x2, z2) {
-  if (!walk) return [{ x: x2, z: z2 }];
+  PG = gridAt(x1); buildGrid(PG);
+  const GN = PG.n;
   if (lineClear(x1, z1, x2, z2)) return [{ x: x2, z: z2 }];
   let [si, sj] = cellOf(x1, z1); let [gi, gj] = cellOf(x2, z2);
   if (!walkable(gi, gj)) {
@@ -560,7 +567,7 @@ function findPath(x1, z1, x2, z2) {
   }
   if (!found) return [{ x: x2, z: z2 }];
   const cells = []; let n = goal; while (n !== undefined && n !== start) { cells.push(n); n = came.get(n); } cells.reverse();
-  const pts = cells.map((c) => ({ x: (c % GN) - GO + 0.5, z: Math.floor(c / GN) - GO + 0.5 }));
+  const pts = cells.map((c) => ({ x: (c % GN) + PG.ox + 0.5, z: Math.floor(c / GN) + PG.oz + 0.5 }));
   pts[pts.length - 1] = walkable(...cellOf(x2, z2)) ? { x: x2, z: z2 } : pts[pts.length - 1];
   // string-pull
   const out = []; let cx = x1, cz = z1, k = 0;
@@ -652,8 +659,8 @@ function smashNow(pr) {
 function goToObj(o) {
   if (S.me.dead) return;
   S.objTarget = o; S.npcTarget = null; S.attackTarget = null; S.lootTarget = null;
-  if (Math.hypot(o.x - S.me.x, o.z - S.me.z) < 3.5) { openObj(o); S.objTarget = null; S.path = null; }
-  else S.path = findPath(S.me.x, S.me.z, o.x, o.z + 1.8);
+  if (Math.hypot(o.x - S.me.x, o.z - S.me.z) < (o.k === 'dentr' ? 4.2 : 3.5)) { openObj(o); S.objTarget = null; S.path = null; }
+  else S.path = findPath(S.me.x, S.me.z, o.x, o.z + (o.k === 'dentr' ? 2.9 : 1.8));
 }
 function goPickUp(id) {
   const l = S.loot.get(id); if (!l || S.me.dead) return;
@@ -967,6 +974,8 @@ function openNpc(id) {
   sfx.click();
 }
 function openObj(o) {
+  if (o.k === 'dentr') { send({ t: 'enter', d: o.dng }); return; }
+  if (o.k === 'dexit') { send({ t: 'leave' }); return; }
   closeAll(); S.openObj = o; sfx.click();
   if (o.k === 'chest') { $('stashwin').hidden = false; renderStash(); openWin('charwin'); }
   else { $('waywin').hidden = false; renderWay(); }
@@ -1149,12 +1158,30 @@ function buildMapImage() {
   for (const o of world.obs) {
     const px = (o.x + MH) * MAPRES, pz = (o.z + MH) * MAPRES;
     if (o.box) { x.fillStyle = o.k === 'crypt' ? '#2a2630' : '#6a4a34'; x.fillRect(px - o.hw * MAPRES, pz - o.hd * MAPRES, o.hw * 2 * MAPRES, o.hd * 2 * MAPRES); continue; }
+    if (o.k === 'dentr') { x.fillStyle = '#ff8a4a'; x.fillRect(px - 3 * MAPRES, pz - 2 * MAPRES, 6 * MAPRES, 4 * MAPRES); continue; }
     if (o.k === 'waystone') { x.fillStyle = '#7ad8ff'; x.beginPath(); x.arc(px, pz, 2.6 * MAPRES, 0, Math.PI * 2); x.fill(); continue; }
     if (!col[o.k]) continue;
     x.fillStyle = col[o.k]; x.beginPath(); x.arc(px, pz, Math.max(1, o.r * MAPRES * (o.k === 'oak' || o.k === 'pine' || o.k === 'snowpine' || o.k === 'bogtree' ? 1.6 : 1)), 0, Math.PI * 2); x.fill();
   }
   x.fillStyle = '#5a8ab8'; x.beginPath(); x.arc(MH * MAPRES, MH * MAPRES, 2.3 * MAPRES, 0, Math.PI * 2); x.fill();
   mapReady = true;
+}
+// dungeon maps: floor light, walls dark
+const DMAPRES = 4;
+const dmaps = [];
+function dungeonMap(d) {
+  if (dmaps[d.i]) return dmaps[d.i];
+  const N = DNG_TILES * DNG_TILE * DMAPRES; const c = document.createElement('canvas'); c.width = c.height = N; const x = c.getContext('2d');
+  x.fillStyle = '#07060a'; x.fillRect(0, 0, N, N);
+  const D = world.dungeons[d.i], th = DTHEME[d.theme], T = DNG_TILE * DMAPRES;
+  for (let z = 0; z < DNG_TILES; z++) for (let i = 0; i < DNG_TILES; i++) {
+    if (D.floor[i + z * DNG_TILES]) { x.fillStyle = th.floor2; x.fillRect(i * T, z * T, T, T); }
+  }
+  x.globalAlpha = 0.9; x.fillStyle = th.wall;
+  for (const o of world.obs) if (o.k === 'dwall' && o.dng === d.i) x.fillRect(o.tx * T, o.tz * T, T, T);
+  x.globalAlpha = 1;
+  for (const o of world.obs) if (o.k === 'dexit' && o.dng === d.i) { x.fillStyle = '#bfe6ff'; x.beginPath(); x.arc((o.x - d.ox) * DMAPRES, (o.z - d.oz) * DMAPRES, 2.2 * DMAPRES, 0, Math.PI * 2); x.fill(); }
+  dmaps[d.i] = c; return c;
 }
 function drawMarkers(x, toPx, scale, big) {
   // loot
@@ -1181,7 +1208,9 @@ function drawMinimap() {
   const R = 48; // world units shown from centre to edge
   const cx = S.me.x, cz = S.me.z;
   x.fillStyle = '#100c14'; x.fillRect(0, 0, W, W);
-  x.drawImage(mapImg, (cx - R + MH) * MAPRES, (cz - R + MH) * MAPRES, R * 2 * MAPRES, R * 2 * MAPRES, 0, 0, W, W);
+  const dg = dungeonAt(cx);
+  if (dg) x.drawImage(dungeonMap(dg), (cx - R - dg.ox) * DMAPRES, (cz - R - dg.oz) * DMAPRES, R * 2 * DMAPRES, R * 2 * DMAPRES, 0, 0, W, W);
+  else x.drawImage(mapImg, (cx - R + MH) * MAPRES, (cz - R + MH) * MAPRES, R * 2 * MAPRES, R * 2 * MAPRES, 0, 0, W, W);
   const s = W / (R * 2);
   drawMarkers(x, (wx, wz) => [(wx - cx + R) * s, (wz - cz + R) * s], s, false);
   const g = x.createRadialGradient(W / 2, W / 2, W * 0.35, W / 2, W / 2, W * 0.5); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.55)');
@@ -1190,6 +1219,15 @@ function drawMinimap() {
 function drawBigMap() {
   if (!mapReady) buildMapImage();
   const cv = $('bigmap'); const x = cv.getContext('2d'); const W = cv.width;
+  const dg = dungeonAt(S.me.x);
+  if (dg) {
+    const span = DNG_TILES * DNG_TILE; const sc = W / span;
+    x.drawImage(dungeonMap(dg), 0, 0, W, W);
+    x.textAlign = 'center'; x.font = `700 ${Math.round(W * 0.04)}px "Grenze Gotisch", Georgia, serif`; x.fillStyle = '#f3dfb2'; x.strokeStyle = 'rgba(0,0,0,.85)'; x.lineWidth = 5;
+    x.strokeText(dg.name, W / 2, W * 0.06); x.fillText(dg.name, W / 2, W * 0.06);
+    drawMarkers(x, (wx, wz) => [(wx - dg.ox) * sc, (wz - dg.oz) * sc], sc, true);
+    return;
+  }
   x.drawImage(mapImg, 0, 0, W, W);
   const s = W / (MH * 2);
   const toPx = (wx, wz) => [(wx + MH) * s, (wz + MH) * s];
@@ -1205,6 +1243,11 @@ function drawBigMap() {
     const [px, py] = toPx(t.x, t.z);
     const known = S.inv?.wp?.includes(t.id);
     text(t.name, px, py - (t.id === 'town' ? W * 0.065 : W * 0.04), `700 ${Math.round(W * 0.022)}px "Grenze Gotisch", Georgia, serif`, known ? '#ffd27a' : '#b8a888');
+  }
+  for (const D of world.dungeons) {
+    const [px, py] = toPx(D.ex, D.ez); const d = DUNGEONS[D.i];
+    text('▼', px, py + W * 0.008, `${Math.round(W * 0.026)}px serif`, '#ff9a5a');
+    text(d.name, px, py + W * 0.03, `600 ${Math.round(W * 0.014)}px "Alegreya Sans", sans-serif`, '#ffc8a0');
   }
   for (const [A, nm, cc] of [[BOSS_ARENA, 'Morvath', '#9affaa'], [BOSS_ARENA2, 'Nharzul', '#d0a8ff']]) {
     const [bx, by] = toPx(A.x, A.z);
@@ -1229,6 +1272,13 @@ const ATMOS = {
   cinderwatch: { fog: '#2e1e1a', sky: '#d8a080', gnd: '#30201a', sun: '#ffa060', si: 2.1, near: 38, far: 100 },
   mirebrook: { fog: '#24302a', sky: '#a0b8a0', gnd: '#20281e', sun: '#ffd8a0', si: 1.9, near: 36, far: 98 },
 };
+for (const d of DUNGEONS) {
+  const th = DTHEME[d.theme];
+  ATMOS[d.id] = { earth: { fog: '#0e0a08', sky: '#c0a080', gnd: '#2a2018', sun: '#ffb070', si: 0.9 }, bone: { fog: '#0a0a0e', sky: '#a0a0c0', gnd: '#201e28', sun: '#c0c8ff', si: 0.8 },
+    ice: { fog: '#0c1218', sky: '#b0d0f0', gnd: '#283442', sun: '#d0e8ff', si: 1.0 }, lava: { fog: '#140806', sky: '#e09070', gnd: '#301410', sun: '#ff9050', si: 0.9 },
+    moss: { fog: '#080e0a', sky: '#a0c0a0', gnd: '#1a261a', sun: '#c0ffb0', si: 0.8 } }[d.theme];
+  Object.assign(ATMOS[d.id], { near: 34, far: 72 });
+}
 const atm = { fog: new THREE.Color('#2c2536'), sky: new THREE.Color('#a08cc8'), gnd: new THREE.Color('#2c2218'), sun: new THREE.Color('#ffb27a'), si: 2.3, near: 42, far: 105 };
 const _c = new THREE.Color();
 function updateAtmosphere(dt, zone) {
@@ -1272,6 +1322,7 @@ function ambient(dt, cx, cz, zone, t) {
   if (zone === 'ember' || zone === 'cinderwatch') {
     for (let i = 0; i < 2; i++) { const a = Math.random() * Math.PI * 2, r = Math.random() * 24; parts.emit(cx + Math.cos(a) * r, 0.3, cz + Math.sin(a) * r, { n: 1, color: 0xff7a20, color2: 0xffd060, speed: 0.4, vy: 1.6, life: [1.5, 3], size: [0.07, 0.13] }); }
   }
+  if (ZONES[zone]?.dungeon && Math.random() < 0.4) { const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * 16; parts.emit(cx + Math.cos(a) * r, 0.5 + Math.random() * 2.5, cz + Math.sin(a) * r, { n: 1, color: 0xb0a090, speed: 0.15, life: [2.5, 4], size: [0.06, 0.1], vy: 0.05 }); }
   const motes = { meadow: [0xd8ff7a, 0.5], thorn: [0xb8e0a0, 0.35], grave: [0xa890ff, 0.35], crypt: [0x6aff8a, 0.45], town: [0xffc070, 0.15], mire: [0xe0ff6a, 0.7], mirebrook: [0xe0ff6a, 0.4], spire: [0xc08aff, 0.6] }[zone];
   if (motes && Math.random() < motes[1]) {
     const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 22;
@@ -1391,7 +1442,7 @@ function frame() {
   // arrival checks
   if (S.npcTarget) { const n = S.npcs.find((q) => q.id === S.npcTarget); if (n && Math.hypot(n.x - me.x, n.z - me.z) < 4.2) { S.npcTarget = null; S.path = null; openNpc(n.id); } else if (!S.path) S.npcTarget = null; }
   if (S.propTarget !== null) { const pr = world.props[S.propTarget]; if (Math.hypot(pr.x - me.x, pr.z - me.z) < 2.6) { S.path = null; smashNow(pr); } else if (!S.path) S.propTarget = null; }
-  if (S.objTarget) { const o = S.objTarget; if (Math.hypot(o.x - me.x, o.z - me.z) < 3.5) { S.objTarget = null; S.path = null; openObj(o); } else if (!S.path) S.objTarget = null; }
+  if (S.objTarget) { const o = S.objTarget; if (Math.hypot(o.x - me.x, o.z - me.z) < (o.k === 'dentr' ? 4.2 : 3.5)) { S.objTarget = null; S.path = null; openObj(o); } else if (!S.path) S.objTarget = null; }
   if (S.lootTarget) { const l = S.loot.get(S.lootTarget); if (!l) S.lootTarget = null; else if (Math.hypot(l.x - me.x, l.z - me.z) < 2.5) { send({ t: 'pick', id: l.id }); S.lootTarget = null; S.path = null; } else if (!S.path) S.lootTarget = null; }
   // walking away from an NPC closes their window
   {
@@ -1414,7 +1465,7 @@ function frame() {
     const prev = S.zone; S.zone = zone;
     const zd = ZONES[zone];
     $('zonename').textContent = zd.name; $('zonelvl').textContent = zd.lv ? `Level ${zd.lv[0]}–${zd.lv[1]}` : zd.sub;
-    if (prev) banner(zd.name, zd.lv ? `LEVEL ${zd.lv[0]}–${zd.lv[1]}` : 'SANCTUARY · ENEMIES CANNOT FOLLOW YOU HERE');
+    if (prev) banner(zd.name, zd.dungeon ? `DUNGEON · LEVEL ${zd.lv[0]}–${zd.lv[1]}` : zd.lv ? `LEVEL ${zd.lv[0]}–${zd.lv[1]}` : 'SANCTUARY · ENEMIES CANNOT FOLLOW YOU HERE');
   }
   // ----- entities
   const sm = 1 - Math.exp(-dt * 14);
@@ -1477,6 +1528,19 @@ function frame() {
   ftext.update(dt, project);
   updateHotbar(dt);
   mmTimer -= dt; if (mmTimer <= 0) { mmTimer = 0.1; drawMinimap(); }
+  // in dungeons, walls between the camera and the hero sink into the floor
+  {
+    const dg = dungeonAt(me.x);
+    for (const [i, W] of (WV.dwalls || []).entries()) {
+      if (!W) continue;
+      const want = new Set();
+      if (dg && dg.i === i) W.walls.forEach((o, k) => { const dz = o.z - me.z; if (dz > -0.5 && dz < 6 && Math.abs(o.x - me.x) < 3.2 + dz * 0.4) want.add(k); });
+      let changed = false;
+      for (const k of W.low) if (!want.has(k)) { W.im.setMatrixAt(k, W.full[k]); changed = true; }
+      for (const k of want) if (!W.low.has(k)) { W.im.setMatrixAt(k, W.cut[k]); changed = true; }
+      W.low = want; if (changed) W.im.instanceMatrix.needsUpdate = true;
+    }
+  }
   for (const b of WV.buildings) {
     const o = b.o; const behind = me.z < o.z + o.hd && me.z > o.z - o.hd - 9 && Math.abs(me.x - o.x) < o.hw + 1.6 && me.z < o.z;
     const want = behind ? 0.28 : 1;
@@ -1502,7 +1566,7 @@ function updateTargetFrame(e) {
   tf.querySelector('.bar span').textContent = e.boss && e.bhp != null ? `${e.bhp} / ${e.bmhp}` : `${Math.ceil(f * 100)}%`;
   const lv = S.inv?.lvl || 1; const diff = e.lvl - lv;
   const col = diff >= 3 ? '#ff5a4a' : diff >= 1 ? '#ffb04a' : diff <= -4 ? '#8a8a8a' : '#d8d0b8';
-  tf.querySelector('.sub').innerHTML = `<span style="color:${col}">Level ${e.lvl}</span>${e.flags & 1 ? ' · Champion' : ''}${e.boss ? (e.type === 'boss2' ? ' · Heart of the Shattered Spire' : ' · Lord of the Hollow Crypt') : ''}${e.flags & 2 ? ' · Frozen' : ''}${e.flags & 4 ? ' · Stunned' : ''}${e.flags & 8 ? ' · <span style="color:#ff5a4a">Enraged</span>' : ''}`;
+  tf.querySelector('.sub').innerHTML = `<span style="color:${col}">Level ${e.lvl}</span>${e.flags & 1 ? ' · Champion' : ''}${e.boss ? ' · ' + ({ boss: 'Lord of the Hollow Crypt', boss2: 'Heart of the Shattered Spire', gobking: 'King under Thornwood', bonelord: 'Mistress of the Catacombs', icelord: 'Heart of the Frozen Depths', ashmaw: 'Maw of the Molten Deep', prophet: 'Voice of the Sunken Temple' }[e.type] || 'Dungeon lord') : ''}${e.flags & 2 ? ' · Frozen' : ''}${e.flags & 4 ? ' · Stunned' : ''}${e.flags & 8 ? ' · <span style="color:#ff5a4a">Enraged</span>' : ''}`;
 }
 function placeLabel(el, x, y, z) {
   const s = project(x, y, z);

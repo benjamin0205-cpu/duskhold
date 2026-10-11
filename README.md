@@ -12,6 +12,9 @@ være i samme verden på én gang.
   med **Cinderwatch**, Drowned Marsh (15–17) med **Mirebrook** og Shattered Spire (17–20).
 - **Max level 20** og **20 quests** fordelt på fire quest-givere, med to bosser:
   **Morvath, the Hollow King** og **Nharzul, the Shardbound**.
+- **5 dungeons** under jorden, ligesom i Diablo: Goblin Warren (level 4–6), The Catacombs (7–9),
+  Frozen Depths (12–14), The Molten Deep (14–16) og Sunken Temple (16–18). Find trappen ned
+  (▼ på kortet), kæmp dig gennem rummene og dræb dungeon-bossen, som vogter en skattekiste.
 - **En kiste i hver by** til at gemme ting i. Alle kister deler indhold.
 - **Waystones** i hver by: rør dem én gang, så kan du rejse hurtigt mellem byerne.
 - **Nye butikker:** større tasker, større kiste, eliksirer (Fury og Stone), mystiske
