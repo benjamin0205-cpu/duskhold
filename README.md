@@ -16,6 +16,10 @@ være i samme verden på én gang.
 - **5 dungeons med flere etager** under jorden, ligesom i Diablo (2–3 etager hver): Goblin Warren (level 4–6), The Catacombs (7–9),
   Frozen Depths (12–14), The Molten Deep (14–16) og Sunken Temple (16–18). Find trappen ned
   (▼ på kortet), kæmp dig gennem rummene og dræb dungeon-bossen, som vogter en skattekiste.
+- **Hest (tast R):** køb en hest hos Borin, og rid 60% hurtigere. Kamp kaster dig af.
+- **Treasure goblins:** sjældne goblins med en sæk guld dukker op ude i verden. De løber
+  væk og forsvinder, så fang dem hurtigt!
+- **Health globes:** monstre taber røde kugler, der healer dig, når du går hen over dem.
 - **Town portal (tast T):** stå stille et øjeblik, så åbner en portal til den sidste by, du
   har besøgt. Gå ind i portalen i byen for at komme lige tilbage. Venner kan også bruge den.
 - **Smid ting (højreklik på en ting i tasken):** tingen lander på jorden, og alle kan samle
@@ -84,6 +88,7 @@ Serveren kører, så længe vinduet er åbent. Luk vinduet for at stoppe den.
 | **2 · 3 · 4** | Flere evner, som låses op på level 3, 5 og 8 |
 | **Shift + klik** | Angrib mod musen uden at gå |
 | **Q** | Drik en healing potion |
+| **R** | Rid på din hest (hvis du har købt en) |
 | **T** | Town portal: åbn en portal til byen og gå tilbage igen bagefter |
 | **Højreklik på en ting i tasken** | Smid den på jorden |
 | **C** eller **I** | Karakter og tasker. Klik på en ting for at tage den på. |

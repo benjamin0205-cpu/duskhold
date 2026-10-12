@@ -591,6 +591,7 @@ function biped(o) {
     weapon.rotation.x = 0.1; hand.add(weapon);
   }
   if (o.dual) { const d2w = new THREE.Group(); d2w.add(mesh(new THREE.BoxGeometry(0.06, 0.5, 0.12), mk(o.blade || '#c9ced6', { m: 0.7, r: 0.3 }), 0, 0.37, 0)); d2w.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.2, 5), mk('#2a1a14'), 0, 0.02, 0)); d2w.rotation.x = Math.PI / 2 - 0.25; lhand.add(d2w); }
+  if (o.sack) { const sk = mesh(new THREE.IcosahedronGeometry(0.42, 1), mk('#7a5a30'), 0, 1.35, -0.42); sk.scale.set(1, 1.15, 0.9); body.add(sk); body.add(mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.18, 6), mk('#5a3a1a'), 0, 1.85, -0.4)); const gl = glowSprite(0xffd040, 1.6, 0.7); gl.position.set(0, 1.9, -0.4); body.add(gl); }
   if (o.mask) head.add(mesh(new THREE.BoxGeometry(0.4, 0.14, 0.1), mk(o.mask), 0, -0.07, 0.19));
   if (o.shield) { const sh = mesh(new THREE.BoxGeometry(0.08, 0.62, 0.5), mk(o.shield, { m: 0.3 }), -0.08, 0.05, 0.05); sh.rotation.x = 0.1; lhand.add(sh); const boss = mesh(new THREE.SphereGeometry(0.08, 6, 4), mk('#b48d55', { m: 0.6 }), -0.13, 0.05, 0.05); lhand.add(boss); }
   root.scale.setScalar(sc);
@@ -689,6 +690,7 @@ export function makeMonsterModel(type) {
     case 'drowned': return biped({ skin: '#6a8a80', torso: '#3a4a52', arms: '#6a8a80', legs: '#2e3a40', belt: '#5a4a2a', hat: 'hood', hatC: '#2a3a3a', longArms: true, hunch: 0.35, eyes: '#7affd8', weapon: 'dagger', blade: '#6a7a70' });
     case 'voidknight': return biped({ skin: '#2a2236', torso: '#2e2840', arms: '#3a3250', legs: '#241e30', pauldrons: '#6a4ab8', hat: 'helm', plume: '#b06aff', weapon: 'greatsword', blade: '#8a6ae0', bladeGlow: '#4a2a8a', shield: undefined, eyes: '#c08aff', cape: '#3a1a5a', scale: 1.3 });
     case 'shade': return biped({ skin: '#3a2a50', torso: '#2a1e3a', arms: '#3a2a50', legs: '#1e1430', robe: true, thin: true, hat: 'hood', hatC: '#1e1430', weapon: 'staff', orb: '#c08aff', eyes: '#e0b0ff', cape: '#2a1440' });
+    case 'tgoblin': return biped({ skin: '#7aa83a', torso: '#5a3a6a', arms: '#7aa83a', legs: '#3a2a4a', ears: true, sack: true, scale: 0.8, headScale: 1.35, eyes: '#ffe040', hunch: 0.3 });
     case 'skelpet': return biped({ skin: '#e0d8c4', torso: '#cfc8b4', arms: '#e0d8c4', legs: '#e0d8c4', boots: '#c0b8a4', thin: true, weapon: 'sword', blade: '#9aa8a0', shield: '#3a4a3a', eyes: '#7affa0', scale: 0.95 });
     case 'magepet': return biped({ skin: '#e0d8c4', torso: '#2a3a30', arms: '#e0d8c4', legs: '#2a3a30', robe: true, thin: true, hat: 'hood', hatC: '#1e2a24', weapon: 'staff', orb: '#7affa0', eyes: '#7affa0', scale: 0.92 });
     case 'gobking': return biped({ skin: '#6f9a3a', torso: '#8a5a1a', arms: '#6f9a3a', legs: '#4a3a24', ears: true, bulk: true, hat: 'crown', weapon: 'axe', scale: 1.55, headScale: 1.3, eyes: '#ffdd33', hunch: 0.15, cape: '#7a2420' });
@@ -716,6 +718,11 @@ export function makeLootModel(kind, r) {
     for (let i = 0; i < 4; i++) { const c = mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.05, 10), M('#e8b830', { m: 0.8, r: 0.3, e: '#3a2a00' }), (Math.random() - 0.5) * 0.3, 0.05 + i * 0.05, (Math.random() - 0.5) * 0.3); g.add(c); }
     return { g, spin: null };
   }
+  if (kind === 'globe') {
+    const orb = mesh(new THREE.IcosahedronGeometry(0.26, 2), M('#ff2030', { e: '#ff1020', ei: 1.2, r: 0.2 }), 0, 0.45, 0); g.add(orb);
+    const gl = glowSprite(0xff3040, 1.6, 0.8); gl.position.y = 0.45; g.add(gl);
+    return { g, spin: orb };
+  }
   if (kind === 'pot') {
     g.add(mesh(new THREE.IcosahedronGeometry(0.18, 1), M('#c0202a', { e: '#600010', r: 0.3 }), 0, 0.25, 0));
     g.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.15, 6), M('#8a7a6a'), 0, 0.45, 0));
@@ -729,5 +736,23 @@ export function makeLootModel(kind, r) {
   }
   if (r >= 1) { const gl = glowSprite(RCOL[r], r >= 3 ? 2.2 : 1.4, 0.8); gl.position.y = 0.5; g.add(gl); }
   return { g, spin: gem };
+}
+// a horse to ride; legs swing with the hero's walk
+export function makeHorse(color = '#6a4a30') {
+  const g = new THREE.Group(); const bm = M(color), dk = M('#2a1e14');
+  const body = mesh(new THREE.BoxGeometry(0.75, 0.7, 1.7), bm, 0, 1.15, 0); body.castShadow = true; g.add(body);
+  const neck = mesh(new THREE.BoxGeometry(0.4, 0.8, 0.45), bm, 0, 1.6, 0.85); neck.rotation.x = 0.55; g.add(neck);
+  g.add(mesh(new THREE.BoxGeometry(0.34, 0.36, 0.7), bm, 0, 1.92, 1.25));
+  g.add(mesh(new THREE.BoxGeometry(0.12, 0.6, 0.5), dk, 0, 1.75, 0.65));
+  const tail = mesh(new THREE.BoxGeometry(0.14, 0.7, 0.14), dk, 0, 1.0, -0.95); tail.rotation.x = -0.4; g.add(tail);
+  g.add(mesh(new THREE.BoxGeometry(0.8, 0.12, 0.7), M('#8a2a20'), 0, 1.52, -0.05));
+  const legs = [];
+  for (const [x, z, ph] of [[-0.25, 0.65, 0], [0.25, 0.65, Math.PI], [-0.25, -0.65, Math.PI], [0.25, -0.65, 0]]) {
+    const p = new THREE.Group(); p.position.set(x, 0.85, z); p.userData.ph = ph;
+    p.add(mesh(new THREE.BoxGeometry(0.17, 0.85, 0.2), bm, 0, -0.42, 0));
+    p.add(mesh(new THREE.BoxGeometry(0.19, 0.12, 0.22), dk, 0, -0.8, 0.02));
+    g.add(p); legs.push(p);
+  }
+  return { g, legs };
 }
 export { NPCS };

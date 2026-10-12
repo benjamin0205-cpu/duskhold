@@ -8,7 +8,7 @@ import {
 } from '../sim.js';
 import { sfx, initAudio, setSound, setMusic } from './audio.js';
 import { paintAbility, drawItemInto } from './icons.js';
-import { buildWorld, buildProps, DTHEME, makePlayerModel, makeNpcModel, makeMonsterModel, makeLootModel, glowSprite, groundColor, CLASS_LOOK } from './models.js';
+import { buildWorld, buildProps, DTHEME, makeHorse, makePlayerModel, makeNpcModel, makeMonsterModel, makeLootModel, glowSprite, groundColor, CLASS_LOOK } from './models.js';
 import { Particles, Projectiles, Telegraphs, Rings, Swooshes, FloatText } from './fx.js';
 
 const $ = (id) => document.getElementById(id);
@@ -259,7 +259,7 @@ updateNpcMarkers();
 // loot
 function addLootEnt(a) {
   const isItem = a[3] >= 0;
-  const kind = isItem ? 'item' : a[3] === -1 ? 'gold' : 'pot';
+  const kind = isItem ? 'item' : a[3] === -1 ? 'gold' : a[3] === -3 ? 'globe' : 'pot';
   const { g, spin } = makeLootModel(kind, a[3]);
   g.position.set(a[1], 0, a[2]); scene.add(g);
   const e = { id: a[0], x: a[1], z: a[2], kind, r: a[3], name: a[4], slot: a[5], g, spin, t: Math.random() * 6 };
@@ -421,6 +421,7 @@ function onEvent(e) {
     case 'evade': { const m = S.monsters.get(e.i); if (m) ftext.add(m.x, 2.4, m.z, 'Evade', 'info'); return; }
     case 'die': {
       const m = S.monsters.get(e.i); if (!m) return;
+      if (e.gone) { removeMonsterEnt(m); return; }
       m.dying = 0.0001; m.label.style.display = 'none';
       parts.emit(e.x, 0.8, e.z, { n: 18, color: 0x3a2a3a, color2: 0x8a6a5a, speed: 3, life: [0.4, 0.9], size: [0.3, 0.6], grav: 2, drag: 0.94 });
       if (m.boss) { const c2 = m.type === 'boss2'; shake(1); rings.add(e.x, e.z, 1, 14, 1.2, c2 ? 0xc08aff : 0x7aff9a); parts.emit(e.x, 2, e.z, { n: 160, color: c2 ? 0xa06aff : 0x6aff8a, color2: c2 ? 0xf0e0ff : 0xe8ffe0, speed: 9, life: [0.8, 2], size: [0.3, 0.7], drag: 0.95, vy: 3 }); }
@@ -481,6 +482,10 @@ function onFx(e, v) {
       sfx.smash(e.pk, v);
       return;
     }
+    case 'globe': parts.emit(e.x, 0.8, e.z, { n: 26, color: 0xff3040, color2: 0xffa0a0, speed: 1.2, radius: 0.6, life: [0.5, 0.9], size: [0.2, 0.35], vy: 3 }); if (self) sfx.potion(); return;
+    case 'coins': parts.emit(e.x, 1.2, e.z, { n: 10, color: 0xffd040, color2: 0xfff0a0, speed: 4, life: [0.4, 0.8], size: [0.12, 0.2], grav: 14, vy: 4 }); sfx.gold(); return;
+    case 'goblinin': case 'goblingone': rings.add(e.x, e.z, 0.3, 2.4, 0.6, 0xffc040); parts.emit(e.x, 0.8, e.z, { n: 50, color: 0xffd040, color2: 0xb06aff, speed: 2.5, radius: 0.6, life: [0.5, 1.1], size: [0.2, 0.35], vy: 3 }); sfx.blink(); return;
+    case 'mount': parts.emit(e.x, 0.2, e.z, { n: 20, color: 0x9a8060, speed: 2, ring: true, life: [0.4, 0.8], size: [0.35, 0.6], drag: 0.92 }); return;
     case 'holylight': rings.add(e.x, e.z, 0.5, e.r, 0.8, 0xffe080, 0.06, 0.15); for (const p of S.players.values()) if (Math.hypot(p.x - e.x, p.z - e.z) < e.r) parts.emit(p.x, 0.5, p.z, { n: 30, color: 0xffe080, color2: 0xffffff, speed: 0.6, radius: 0.7, life: [0.7, 1.3], size: [0.2, 0.4], vy: 3.5 }); sfx.mend(); return;
     case 'holy': rings.add(e.x, e.z, 0.5, e.r, 0.4, 0xffd860, 0.08, 0.35); parts.emit(e.x, 0.8, e.z, { n: 70, color: 0xffd860, color2: 0xffffff, speed: 13, ring: true, life: [0.25, 0.5], size: [0.25, 0.5], drag: 0.9 }); sfx.warcry(); return;
     case 'holyboom': rings.add(e.x, e.z, 0.3, e.r, 0.3, 0xffd860); parts.emit(e.x, 1.0, e.z, { n: 40, color: 0xffd860, color2: 0xffffff, speed: 6, life: [0.2, 0.5], size: [0.3, 0.6], drag: 0.9 }); sfx.hit(v); return;
@@ -707,6 +712,7 @@ window.addEventListener('keydown', (e) => {
   if (['1', '2', '3', '4'].includes(k)) { castSlot(Number(k)); return; }
   if (k === 'q') { drink(); return; }
   if (k === 't') { openPortal(); return; }
+  if (k === 'r') { if (S.inv && !S.inv.mount) { toast('You have no horse yet. Borin in Duskhold sells them.', 'warn'); sfx.error(); return; } send({ t: 'mount' }); return; }
   if (k === 'c' || k === 'i' || k === 'b') { toggle('charwin'); return; }
   if (k === 'l' || k === 'j') { toggle('logwin'); return; }
   if (k === 'm') { toggle('mapwin'); return; }
@@ -1068,8 +1074,8 @@ function renderShop() {
     if (o.k === 'potion') extra = ` You have ${iv.pots}.`;
     if (o.k === 'bag') extra = ` Now ${iv.inv.length} of ${INV_MAX}.`;
     if (o.k === 'stashup') extra = ` Now ${iv.stash.length} of ${STASH_MAX}.`;
-    const maxed = (o.k === 'bag' && iv.inv.length >= INV_MAX) || (o.k === 'stashup' && iv.stash.length >= STASH_MAX);
-    html += `<div class="row"><div>${info.name}<small>${info.desc}${extra}</small></div><button class="btn" data-buy="${o.k}" ${poor || maxed ? 'disabled' : ''}>${maxed ? 'Maxed' : `<span class="gold">${o.price}</span>`}</button></div>`;
+    const maxed = (o.k === 'bag' && iv.inv.length >= INV_MAX) || (o.k === 'stashup' && iv.stash.length >= STASH_MAX) || (o.k === 'horse' && iv.mount);
+    html += `<div class="row"><div>${info.name}<small>${info.desc}${extra}</small></div><button class="btn" data-buy="${o.k}" ${poor || maxed ? 'disabled' : ''}>${maxed ? (o.k === 'horse' ? 'Owned' : 'Maxed') : `<span class="gold">${o.price}</span>`}</button></div>`;
   }
   if (items.length) {
     html += `<div class="hd">WARES · NEW STOCK IN ${Math.max(1, Math.ceil((sh.refresh - (performance.now() - (sh._at || performance.now())) / 1000) / 60))} MIN</div>`;
@@ -1549,6 +1555,18 @@ function frame() {
     if (dead) { e.rig.root.rotation.x = Math.max(-Math.PI / 2, e.rig.root.rotation.x - dt * 5); e.rig.root.position.y = 0.2; }
     else { e.rig.root.rotation.x = 0; e.dying = 0; }
     animateRig(e, dt, e.id === S.id ? me.moving : e.moving, t);
+    const riding = !dead && (e.flags & 64);
+    if (riding && !e.horse) { e.horse = makeHorse(['#6a4a30', '#3a3030', '#d8d0c0', '#8a6a4a'][e.id % 4]); e.rig.root.add(e.horse.g); }
+    if (e.horse) {
+      e.horse.g.visible = !!riding;
+      if (riding) {
+        e.rig.body.position.y += 0.82;
+        for (const l of e.rig.legs) l.rotation.x = -1.25;
+        const mv = e.id === S.id ? me.moving : e.moving;
+        for (const l of e.horse.legs) l.rotation.x = mv ? Math.sin(e.walk * 0.9 + l.userData.ph) * 0.7 : 0;
+        e.horse.g.position.y = mv ? Math.abs(Math.sin(e.walk * 0.9)) * 0.06 : 0;
+      }
+    }
   }
   for (const e of [...S.monsters.values()]) {
     if (e.dying) {

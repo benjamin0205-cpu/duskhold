@@ -224,6 +224,8 @@ export const MONSTERS = {
   horror:     { name: 'Marsh Horror', short: 'Horror', hp: 150, dmg: 20, speed: 6, r: 1.1, range: 2.1, atkCd: 1.3, aggro: 9, xp: 1.9 },
   voidknight: { name: 'Void Knight', short: 'Knight', hp: 200, dmg: 24, speed: 5, r: 0.9, range: 2.2, atkCd: 1.5, aggro: 11, xp: 2.3 },
   shade:      { name: 'Shard Shade', short: 'Shade', hp: 90, dmg: 20, speed: 5.2, r: 0.6, range: 11, ranged: true, proj: 'void', pspeed: 18, atkCd: 2.0, aggro: 13, xp: 1.8 },
+  // shows up now and then, runs, and is worth chasing
+  tgoblin:  { name: 'Treasure Goblin', short: 'Goblin', hp: 140, dmg: 0, speed: 7.2, r: 0.6, range: 0, atkCd: 99, aggro: 12, xp: 4, goblin: true },
   // the Necromancer's servants
   skelpet:  { name: 'Risen Warrior', short: 'Warrior', hp: 70, dmg: 0, speed: 6.6, r: 0.6, range: 1.8, atkCd: 1.0, aggro: 0, xp: 0, pet: true, mult: 0.42 },
   magepet:  { name: 'Risen Mage', short: 'Mage', hp: 45, dmg: 0, speed: 6.4, r: 0.6, range: 9, ranged: true, proj: 'bone', pspeed: 20, atkCd: 1.5, aggro: 0, xp: 0, pet: true, mult: 0.5 },
@@ -475,9 +477,9 @@ const ZONE_PROPS = {
 const AMBUSH = { grave: 'skeleton', crypt: 'ghoul', spire: 'shade', frost: 'wraith', ember: 'imp', mire: 'drowned', meadow: 'wolf', thorn: 'goblin' };
 
 // ---------------------------------------------------------------- shops
-export const SHOP_PRICES = { potion: POTION_COST, bag: 800, stashup: 1200, fury: 250, stone: 250, mystic: 2500 };
+export const SHOP_PRICES = { potion: POTION_COST, bag: 800, stashup: 1200, fury: 250, stone: 250, mystic: 2500, horse: 1500 };
 export const SHOPS = {
-  borin: { sell: ['potion', 'crate'] },
+  borin: { sell: ['potion', 'crate', 'horse'] },
   ulfar: { sell: ['potion', 'crate', 'bag'], stock: { n: 4, r: 2, il: 12 } },
   varek: { sell: ['potion', 'fury', 'stone', 'stashup'], stock: { n: 3, r: 3, il: 14 } },
   yselle: { sell: ['potion', 'mystic'], stock: { n: 3, r: 3, il: 16, leg: true } },
@@ -490,6 +492,7 @@ export const SHOP_INFO = {
   stashup: { name: 'Bigger chest', desc: '+12 chest slots, for good. Up to 54 slots.' },
   fury: { name: 'Elixir of Fury', desc: '+25% damage for 5 minutes.' },
   stone: { name: 'Elixir of Stone', desc: '+40% armor for 5 minutes.' },
+  horse: { name: 'Riding horse', desc: 'Yours for good. Press R to ride: 60% faster. Fighting or getting hit throws you off.' },
 };
 
 // ---------------------------------------------------------------- stats
@@ -509,7 +512,7 @@ export function computeStats(p) {
   s.lifesteal = Math.min(15, Math.round(s.lifesteal * 10) / 10);
   s.mhp = Math.round(d.hp + d.hpL * (p.lvl - 1) + s.life);
   s.mres = d.resMax + d.resL * (p.lvl - 1);
-  s.move = d.speed * (1 + s.speed / 100);
+  s.move = d.speed * (1 + s.speed / 100) * (p.mounted ? 1.6 : 1);
   s.dr = Math.min(0.75, s.armor / (s.armor + 40 + 12 * p.lvl));
   const avg = (s.dmin + s.dmax) / 2 * (1 + s.power / 100) * (1 + 0.06 * (p.lvl - 1));
   s.dps = Math.round(avg * (1 + (s.crit / 100) * 0.75) / d.basicCd);
@@ -972,6 +975,7 @@ export function sanitizeSave(b, cls) {
   for (let i = 0; i < st; i++) out.stash.push(Array.isArray(b.stash) ? sanitizeItem(b.stash[i], cls) : null);
   if (Array.isArray(b.wp)) for (const id of b.wp) if (TOWN_BY_ID[id] && !out.wp.includes(id)) out.wp.push(id);
   if (TOWN_BY_ID[b.home] && out.wp.includes(b.home)) out.home = b.home;
+  out.mount = !!b.mount;
   if (b.eq && typeof b.eq === 'object') for (const s of SLOTS) { const it = sanitizeItem(b.eq[s], cls); if (it && it.slot === s && (s !== 'weapon' || it.cls === cls)) out.eq[s] = it; }
   if (b.q && typeof b.q === 'object') {
     if (Array.isArray(b.q.d)) out.q.d = b.q.d.filter((id) => QUEST_BY_ID[id] && !QUEST_BY_ID[id].repeat);
@@ -1055,11 +1059,11 @@ export class Game {
     this.rosterDirty = true;
     this.sys(`${p.name} has left.`);
   }
-  saveOf(p) { return { name: p.name, cls: p.cls, lvl: p.lvl, xp: p.xp, gold: p.gold, pots: p.pots, inv: p.inv, stash: p.stash, eq: p.eq, q: p.q, wp: p.wp, home: p.home }; }
+  saveOf(p) { return { name: p.name, cls: p.cls, lvl: p.lvl, xp: p.xp, gold: p.gold, pots: p.pots, inv: p.inv, stash: p.stash, eq: p.eq, q: p.q, wp: p.wp, home: p.home, mount: p.mount ? 1 : 0 }; }
   sendInv(p) {
     p.st = computeStats(p);
     p.hp = Math.min(p.hp, p.st.mhp); p.res = Math.min(p.res, p.st.mres);
-    this.to(p.id, { t: 'inv', lvl: p.lvl, xp: p.xp, need: xpNeed(p.lvl), gold: p.gold, pots: p.pots, inv: p.inv, stash: p.stash, eq: p.eq, q: p.q, st: p.st, wp: p.wp, home: p.home });
+    this.to(p.id, { t: 'inv', lvl: p.lvl, xp: p.xp, need: xpNeed(p.lvl), gold: p.gold, pots: p.pots, inv: p.inv, stash: p.stash, eq: p.eq, q: p.q, st: p.st, wp: p.wp, home: p.home, mount: !!p.mount, mounted: !!p.mounted });
   }
 
   // ---------- messages from clients
@@ -1080,6 +1084,7 @@ export class Game {
       case 'stash': return this.stashMove(p, m.a, num(m.i, -1) | 0);
       case 'travel': return this.travel(p, m.to);
       case 'drop': return this.dropItem(p, num(m.i, -1) | 0);
+      case 'mount': return this.toggleMount(p);
       case 'portal': return this.startPortal(p);
       case 'useportal': return this.usePortal(p, num(m.id, -1) | 0);
       case 'smash': return this.smashProp(p, num(m.id, -1) | 0);
@@ -1148,6 +1153,21 @@ export class Game {
     this.loot.set(this.nextId, { id: this.nextId++, o: 0, pub: 1, x, z, until: this.now + 300, item: it });
     for (const o of this.players.values()) o.lootDirty = true;
     this.to(p.id, { t: 'dropped', n: it.name });
+    this.sendInv(p);
+  }
+  // ---------- riding
+  toggleMount(p) {
+    if (!p.alive) return;
+    if (p.mounted) return this.dismount(p);
+    if (!p.mount) return this.note(p, 'You have no horse. Borin in Duskhold sells them.', 'warn');
+    if (this.now - p.lastCombat < 3) return this.note(p, 'You cannot mount up in the middle of a fight.', 'warn');
+    p.mounted = true; p.grace = 3; p.graceUntil = this.now + 0.6;
+    this.ev(p.x, p.z, { e: 'fx', k: 'mount', i: p.id, x: p.x, z: p.z });
+    this.sendInv(p);
+  }
+  dismount(p) {
+    if (!p.mounted) return;
+    p.mounted = false;
     this.sendInv(p);
   }
   // ---------- town portals
@@ -1339,6 +1359,13 @@ export class Game {
       for (let k = 0; k < 12; k++) p.stash.push(null);
       this.note(p, `Your chest now holds ${p.stash.length} items.`);
       this.to(p.id, { t: 'bought', w: 'stashup' });
+    } else if (what === 'horse') {
+      if (p.mount) return this.note(p, 'You already own a horse. Press R to ride.', 'warn');
+      if (!pay(SHOP_PRICES.horse)) return;
+      p.mount = true;
+      this.note(p, 'You bought a horse! Press R to ride it.');
+      this.to(p.id, { t: 'bought', w: 'horse' });
+      this.persist(p.id, this.saveOf(p));
     } else if (what === 'fury' || what === 'stone') {
       if (!pay(SHOP_PRICES[what])) return;
       p.buffs[what] = this.now + 300;
@@ -1453,6 +1480,7 @@ export class Game {
     p.lastCombat = this.now;
     this.ev(m.x, m.z, { e: 'dmg', i: m.id, v: amt, c: crit ? 1 : 0, s: p.id });
     if (p.st.lifesteal > 0 && p.alive) { const h = amt * p.st.lifesteal / 100; p.hp = Math.min(p.st.mhp, p.hp + h); }
+    if (m.def.goblin && m.hp > 0 && Math.random() < 0.3) { this.addLoot(p, m.x, m.z, { gold: Math.max(2, Math.round(m.lvl * rnd(1.5, 3))) }); this.ev(m.x, m.z, { e: 'fx', k: 'coins', x: r2(m.x), z: r2(m.z) }); }
     if (opts.stun) m.stunUntil = Math.max(m.stunUntil, this.now + opts.stun);
     if (opts.freeze) m.frozenUntil = Math.max(m.frozenUntil, this.now + opts.freeze);
     if (m.hp <= 0) this.killMonster(m, p);
@@ -1466,11 +1494,13 @@ export class Game {
     if (p.buffs.barrier > this.now) dr = 1 - (1 - dr) * (1 - (p.barrierDr || 0.4));
     const amt = Math.max(1, Math.round(amount * (1 - dr)));
     p.hp -= amt; p.lastHurt = this.now; p.lastCombat = this.now;
+    if (p.mounted) this.dismount(p);
     if (p.cls === 'warrior') p.res = Math.min(p.st.mres, p.res + 2 + (amt / p.st.mhp) * 70);
     this.ev(p.x, p.z, { e: 'dmg', i: p.id, v: amt, p: 1 });
     if (p.hp <= 0) this.killPlayer(p, m);
   }
   killPlayer(p, m) {
+    p.mounted = false;
     p.hp = 0; p.alive = false; p.deadAt = this.now; p.whirlUntil = 0;
     const lost = Math.floor(p.gold * 0.05); p.gold -= lost;
     this.ev(p.x, p.z, { e: 'pdie', i: p.id });
@@ -1515,6 +1545,12 @@ export class Game {
     m.threat.clear();
   }
   dropLoot(m, p) {
+    if (m.def.goblin) {
+      for (let i = 0; i < 6; i++) this.addLoot(p, m.x, m.z, { gold: Math.max(5, Math.round(m.lvl * rnd(6, 12))) });
+      const n = 2 + (Math.random() < 0.5 ? 1 : 0);
+      for (let i = 0; i < n; i++) this.addLoot(p, m.x, m.z, { item: makeItem(m.lvl, Math.random() < 0.08 ? 4 : Math.random() < 0.35 ? 3 : 2, null, p.cls) });
+      return;
+    }
     const drops = [];
     const boss = m.def.boss;
     if (boss && m.def.mini) {
@@ -1530,11 +1566,13 @@ export class Game {
     }
     if (Math.random() < (boss ? 1 : m.champion ? 0.9 : 0.55)) this.addLoot(p, m.x, m.z, { gold: Math.max(1, Math.round(m.lvl * rnd(2, 5) * (m.champion ? 4 : 1) * (boss ? (m.def.mini ? 10 : 25) : 1))) });
     if (Math.random() < (m.champion ? 0.5 : 0.07)) this.addLoot(p, m.x, m.z, { pot: 1 });
+    if (Math.random() < (boss ? 1 : m.champion ? 0.6 : 0.14)) this.addLoot(p, m.x, m.z, { globe: 1, until: this.now + 40 });
   }
   addLoot(p, x, z, o) {
     const a = Math.random() * Math.PI * 2, r = rnd(0.4, 1.8);
     const [lx, lz] = this.world.resolve(x + Math.cos(a) * r, z + Math.sin(a) * r, 0.3);
     const l = { id: this.nextId++, o: p.id, x: lx, z: lz, until: this.now + 150, ...o };
+    if (o.until) l.until = o.until;
     this.loot.set(l.id, l);
     p.lootDirty = true;
     if (l.item) this.to(p.id, { t: 'drop', r: l.item.r, x: lx, z: lz });
@@ -1593,6 +1631,7 @@ export class Game {
   updateMonster(m, dt) {
     const now = this.now;
     if (m.dead) { if (!m.minion && now >= m.respawnAt) this.respawnMonster(m); return; }
+    if (m.def.goblin) return this.updateGoblin(m, dt);
     if (m.state === 'idle') {
       let best = null, bd = (m.def.aggro * (m.champion ? 1.2 : 1)) ** 2;
       for (const p of this.players.values()) {
@@ -1652,6 +1691,43 @@ export class Game {
           if (Math.hypot(hit.x - m.x, hit.z - m.z) <= reach + 1.0) { if (hit.pet) this.hurtPet(hit, m.dmg * rnd(0.85, 1.15)); else this.hurtPlayer(hit, m.dmg * rnd(0.85, 1.15), m); }
         });
       }
+    }
+  }
+  updateGoblin(m, dt) {
+    const now = this.now;
+    let near = null, nd = 1e9;
+    for (const p of this.players.values()) { if (!p.alive) continue; const d = Math.hypot(p.x - m.x, p.z - m.z); if (d < nd) { nd = d; near = p; } }
+    if (m.state === 'idle') {
+      if (near && nd < m.def.aggro) { m.state = 'flee'; m.fleeAt = now; this.ev(m.x, m.z, { e: 'matk', i: m.id }); }
+      else if (now > m.until) m.state = 'flee', m.fleeAt = now - 99;
+      else return;
+    }
+    if (now - m.fleeAt > 22 || !near || nd > 45) {
+      // gone, through its own little portal
+      m.dead = true; m.deadAt = now;
+      this.ev(m.x, m.z, { e: 'fx', k: 'goblingone', x: r2(m.x), z: r2(m.z) });
+      this.ev(m.x, m.z, { e: 'die', i: m.id, x: m.x, z: m.z, gone: 1 });
+      for (const p of this.players.values()) if (d2(p.x, p.z, m.x, m.z) < 40 * 40) this.note(p, 'The treasure goblin escaped with its loot!', 'warn');
+      return;
+    }
+    if (now < m.stunUntil || now < m.frozenUntil) return;
+    // run away from the nearest hero, wiggling now and then
+    const dx = m.x - near.x, dz = m.z - near.z, d = Math.hypot(dx, dz) || 1;
+    const wig = Math.sin(now * 1.7 + m.id) * 0.9;
+    const ax = dx / d * Math.cos(wig) - dz / d * Math.sin(wig), az = dz / d * Math.cos(wig) + dx / d * Math.sin(wig);
+    this.moveM(m, m.x + ax * 4, m.z + az * 4, m.speed * (d < 6 ? 1 : 0.75), dt);
+  }
+  spawnGoblin(p) {
+    const lvl = clamp(dungeonAt(p.x) ? zoneLevel(p.x, p.z) : Math.max(zoneLevel(p.x, p.z), 1), 1, MAX_LEVEL);
+    for (let t = 0; t < 12; t++) {
+      const a = Math.random() * Math.PI * 2;
+      const x = p.x + Math.cos(a) * 16, z = p.z + Math.sin(a) * 16;
+      if (!this.world.free(x, z, 0.8, 0.2) || zoneAt(x, z) !== p.zone) continue;
+      const m = this.spawnMonster('tgoblin', Math.max(1, Math.min(lvl, p.lvl + 1)), x, z, null, true);
+      m.ambush = true; m.champion = false; m.name = m.def.name; m.until = this.now + 45;
+      this.note(p, 'A treasure goblin! Catch it before it runs off with the loot!');
+      this.ev(x, z, { e: 'fx', k: 'goblinin', x: r2(x), z: r2(z) });
+      return;
     }
   }
   bossSpecials(m) {
@@ -1779,6 +1855,7 @@ export class Game {
     if (slot > 0 && p.lvl < ab.lvl) return;
     if (now < p.cds[slot] - 0.1) return;
     if (slot > 0 && ab.cost && p.res < ab.cost) return;
+    if (p.mounted) this.dismount(p);
     let ax = num(m.x, p.x + Math.sin(p.rot)), az = num(m.z, p.z + Math.cos(p.rot));
     if (ax === p.x && az === p.z) az += 0.01;
     const ang = Math.atan2(ax - p.x, az - p.z);
@@ -1989,6 +2066,7 @@ export class Game {
         if (d2(l.x, l.z, p.x, p.z) < 2.2 * 2.2) {
           if (l.gold) { p.gold += l.gold; this.to(p.id, { t: 'gold', v: l.gold }); }
           if (l.pot) { if (p.pots >= MAX_POTIONS) continue; p.pots++; this.to(p.id, { t: 'potup' }); }
+          if (l.globe) { if (p.hp >= p.st.mhp) continue; this.heal(p, p.st.mhp * 0.25); this.ev(p.x, p.z, { e: 'fx', k: 'globe', i: p.id, x: p.x, z: p.z }); }
           this.loot.delete(l.id); p.lootDirty = true; p.invDirty = true;
         }
       }
@@ -2018,6 +2096,11 @@ export class Game {
     if (this.tickN % 20 === 0) for (const [id, pt] of this.portals) if (pt.until < now) { this.portals.delete(id); this.portalsDirty = true; }
     this.broadcast();
     if (this.tickN % 600 === 0) for (const p of this.players.values()) this.persist(p.id, this.saveOf(p));
+    // every so often a treasure goblin turns up near someone out in the wild
+    if (this.tickN % 200 === 0 && this.monsters.filter((m) => m.def.goblin && !m.dead).length < 2) {
+      const cands = [...this.players.values()].filter((p) => p.alive && !isSafe(p.zone) && p.lvl >= 2);
+      if (cands.length && Math.random() < 0.12) this.spawnGoblin(pick(cands));
+    }
   }
   broadcast() {
     const now = this.now;
@@ -2038,7 +2121,7 @@ export class Game {
     }
     const pl = [];
     for (const p of this.players.values()) {
-      const f = (p.alive ? 0 : 1) | (p.whirlUntil > now ? 2 : 0) | (p.buffs.warcry > now ? 4 : 0) | (p.invUntil > now ? 8 : 0) | (p.buffs.mend > now ? 16 : 0) | (p.buffs.barrier > now ? 32 : 0);
+      const f = (p.alive ? 0 : 1) | (p.whirlUntil > now ? 2 : 0) | (p.buffs.warcry > now ? 4 : 0) | (p.invUntil > now ? 8 : 0) | (p.buffs.mend > now ? 16 : 0) | (p.buffs.barrier > now ? 32 : 0) | (p.mounted ? 64 : 0);
       pl.push([p.id, r2(p.x), r2(p.z), r2(p.rot), Math.round((p.hp / p.st.mhp) * 1000), f]);
     }
     const VR2 = VIEW_R * VIEW_R, ER2 = 70 * 70;
@@ -2063,7 +2146,7 @@ export class Game {
       if (p.lootDirty || this.tickN % 10 === 0) {
         p.lootDirty = false;
         const L = [];
-        for (const l of this.loot.values()) if ((l.o === p.id || l.pub) && d2(l.x, l.z, p.x, p.z) < VR2) L.push(l.item ? [l.id, r2(l.x), r2(l.z), l.item.r, l.item.name, l.item.slot] : [l.id, r2(l.x), r2(l.z), l.gold ? -1 : -2, l.gold || 0]);
+        for (const l of this.loot.values()) if ((l.o === p.id || l.pub) && d2(l.x, l.z, p.x, p.z) < VR2) L.push(l.item ? [l.id, r2(l.x), r2(l.z), l.item.r, l.item.name, l.item.slot] : [l.id, r2(l.x), r2(l.z), l.gold ? -1 : l.globe ? -3 : -2, l.gold || 0]);
         msg.l = L;
       }
       this.to(p.id, msg);
