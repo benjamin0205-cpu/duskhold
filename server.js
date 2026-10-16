@@ -27,7 +27,13 @@ const PUBLIC = path.join(__dirname, 'public');
 const THREE_DIR = path.join(__dirname, 'node_modules', 'three', 'build');
 const DATA_DIR = path.join(__dirname, 'data');
 
-const store = await makeStore({ databaseUrl: process.env.DATABASE_URL, dataDir: DATA_DIR });
+let store;
+try { store = await makeStore({ databaseUrl: process.env.DATABASE_URL, dataDir: DATA_DIR }); }
+catch (e) {
+  // a wrong DATABASE_URL should not take the whole game down; /health shows "file" so it can be spotted
+  console.error('\n  Could not connect to the database:', e.message, '\n  Using data/accounts.json instead.\n');
+  store = await makeStore({ dataDir: DATA_DIR });
+}
 setInterval(() => store.flush(), 5000);
 
 // ---------------------------------------------------------------- accounts
