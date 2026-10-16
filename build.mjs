@@ -51,6 +51,25 @@ ${js}
 </body>
 </html>
 `);
+// online copy for other websites (e.g. nyborggaming.vercel.app): one file that plays on the Render server
+const SERVER = process.env.DUSKHOLD_SERVER || 'wss://duskhold.onrender.com/ws';
+fs.writeFileSync('dist/duskhold-online.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+${head}
+</head>
+<body>
+${body}
+<script>window.DUSKHOLD_ONLINE = true; window.DUSKHOLD_SERVER = ${JSON.stringify(SERVER)};</script>
+<script type="importmap">{"imports":{"three":"${THREE_CDN}"}}</script>
+<script type="module">
+${js}
+</script>
+</body>
+</html>
+`);
 // local test copy of the solo build (full document, loads three from node_modules)
 fs.writeFileSync('dist/solo-test.html', `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">${head}</head><body>${body}<script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script><script type="module">${js}</script></body></html>`);
 console.log('built: public/index.html, dist/duskhold.html, solo-version/index.html', (solo.length / 1024).toFixed(0) + ' KB');

@@ -111,7 +111,8 @@ class LocalNet {
 // Online: the socket opens on the login screen, so you log in before choosing a hero.
 class WsNet {
   open(onMsg, onOpen) {
-    const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+    // DUSKHOLD_SERVER is set by the copy that is uploaded to another website (it talks to the Render server).
+    const url = window.DUSKHOLD_SERVER || (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
     this.ws = new WebSocket(url);
     this.ws.onopen = () => { hideConn(); onOpen(); };
     this.ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } onMsg(m); };
