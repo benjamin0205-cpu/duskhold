@@ -90,6 +90,19 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
 .savebtn b { color: var(--cc); }
 #loginnote { color: var(--ash); font-size: 13px; text-align: center; max-width: 60ch; line-height: 1.4; }
 #loginnote b { color: var(--bone); }
+#acct { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+#acctform { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+#acctform input { background: rgba(10,8,12,.85); border: 1px solid var(--rim); color: var(--bone); padding: 10px 12px; font: 600 16px var(--font-ui); width: 200px; border-radius: 2px; }
+#acctmsg { min-height: 1.2em; color: var(--ash); font-size: 14px; text-align: center; max-width: 60ch; }
+#acctmsg.err { color: #ff8a7a; }
+#accthead { color: var(--ash); font-size: 14px; }
+#accthead b { color: var(--bone); }
+.linkbtn { background: none; border: 0; color: var(--ember-hi); cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
+.savewrap { display: inline-flex; align-items: stretch; }
+.savewrap .del { background: rgba(10,8,12,.7); border: 1px solid var(--rim); border-left: 0; color: var(--dim); cursor: pointer; padding: 0 9px; font-size: 15px; }
+.savewrap .del:hover { color: #ff8a7a; }
+.savewrap .del.arm { color: #ff5a4a; font-size: 12px; }
+#chatlog .who { cursor: pointer; }
 
 /* ---------- HUD ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
@@ -315,6 +328,16 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
   <div class="wrap">
     <h1 id="logo">Duskhold</h1>
     <div id="tagline">A SHARED REALM OF LOOT AND RUIN</div>
+    <div id="acct" hidden>
+      <div id="acctform">
+        <input id="acc-user" maxlength="16" placeholder="Account name" autocomplete="username" aria-label="Account name">
+        <input id="acc-pass" type="password" maxlength="64" placeholder="Password" autocomplete="current-password" aria-label="Password">
+        <button id="acc-login" class="btn">Log in</button>
+        <button id="acc-new" class="btn ghost">Create account</button>
+      </div>
+      <div id="acctmsg" role="status"></div>
+      <div id="accthead" hidden>Logged in as <b id="acc-name"></b> · <button class="linkbtn" id="acc-out">Log out</button></div>
+    </div>
     <div id="saved" aria-label="Your heroes"></div>
     <div id="classes" role="radiogroup" aria-label="Class"></div>
     <div id="joinrow">
@@ -420,7 +443,7 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
       <dt>Barrels &amp; urns</dt><dd>Click barrels, crates, urns, bone piles and coffins to smash them for gold, potions and items. Your attacks smash them too. Golden treasure chests hold the best loot. Some coffins are not empty…</dd>
       <dt>C or I</dt><dd>Character and bags. Click an item to equip it.</dd>
       <dt>L · M</dt><dd>Quest log · world map.</dd>
-      <dt>Enter</dt><dd>Chat with everyone in the realm.</dd>
+      <dt>Enter</dt><dd>Chat with everyone in the realm. Click a name in the chat to block that player, or type <b>/block name</b> and <b>/unblock name</b>.</dd>
       <dt>Mouse wheel</dt><dd>Zoom the camera.</dd>
     </dl>
     <p class="say" style="font-style:normal">Talk to <b>Elder Maren</b> (gold “!” above her head) for quests and to <b>Borin</b> to trade. The fountain in town heals you. Enemies with a blue glow are champions: tougher, with better loot. Everyone near a kill gets their own loot and full experience, so group up.</p>
@@ -432,6 +455,7 @@ button:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px so
       <button class="btn ghost" id="opt-sound"></button>
       <button class="btn ghost" id="opt-music"></button>
       <button class="btn ghost" id="opt-shadow"></button>
+      <button class="btn ghost" id="opt-chat"></button>
       <button class="btn ghost" id="opt-logout">Change hero</button>
     </div>
   </section>

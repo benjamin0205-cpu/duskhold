@@ -72,9 +72,33 @@ Serveren kører, så længe vinduet er åbent. Luk vinduet for at stoppe den.
 **Godt at vide om gratis-planen på Render:**
 - Serveren går i dvale efter 15 minutter uden spillere. Den første, der åbner linket
   bagefter, venter cirka et minut, mens den vågner.
-- Når Render genstarter serveren, nulstilles den gemte fil på serveren. Spillet gemmer
-  derfor også din helt i din egen browser og lægger den automatisk tilbage, når du logger
-  ind igen. Dine helte forsvinder altså ikke, så længe du bruger samme browser.
+- Uden en database nulstilles kontiene, når Render genstarter serveren. Heltene ligger dog
+  også som backup i din browser: opret bare kontoen igen med samme navn, så kommer de tilbage.
+  Sæt en gratis database op (se nedenfor), så sker det slet ikke.
+
+### Gem heltene for altid (gratis database hos Neon)
+
+1. Gå til <https://neon.com> og lav en gratis konto (du kan logge ind med GitHub).
+2. Lav et nyt projekt. Kald det `duskhold`, og vælg en region i Europa (fx Frankfurt).
+3. Klik **Connect** og kopiér forbindelses-linket. Det starter med `postgresql://`.
+4. Gå til <https://dashboard.render.com>, klik på din `duskhold`-service og vælg **Environment**.
+5. Klik **Add Environment Variable**:
+   - **Key:** `DATABASE_URL` · **Value:** linket fra Neon
+   - Klik igen og tilføj **Key:** `ADMINS` · **Value:** dit eget kontonavn i spillet
+6. Gem. Render starter serveren igen, og nu bliver alle konti gemt i databasen.
+
+Du kan tjekke, at det virker, ved at åbne `https://DIT-LINK.onrender.com/health`. Der skal stå
+`"store":"database"`.
+
+### Konti, chat og admin
+
+- Online skal man lave en gratis konto med navn og kodeord. Så kan man spille fra enhver
+  computer. Helte fra før kontiene kom med, flyttes automatisk ind i kontoen.
+- Grimme ord bliver lavet om til `****`, og man kan ikke spamme chatten.
+- Klik på et navn i chatten for at blokere spilleren. Skriv `/unblock navn` for at fortryde.
+  Under **?** kan man også slå spiller-chatten helt fra.
+- Står dit kontonavn i `ADMINS`, kan du skrive `/mute navn 30` (30 minutter), `/unmute navn`
+  og `/kick navn` i chatten.
 
 ---
 

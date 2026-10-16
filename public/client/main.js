@@ -18,7 +18,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
-const settings = Object.assign({ sound: true, music: true, quality: 'high' }, store.get('duskhold.settings', {}));
+const settings = Object.assign({ sound: true, music: true, quality: 'high', chat: true }, store.get('duskhold.settings', {}));
 setSound(settings.sound); setMusic(settings.music);
 const CHAR_KEY = ONLINE ? 'duskhold.chars.online' : 'duskhold.chars.solo';
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -108,16 +108,21 @@ class LocalNet {
   flush() { const q = this.queue; this.queue = []; for (const m of q) this.onMsg(JSON.parse(JSON.stringify(m))); }
   send(m) { this.game.handle(this.pid, m); this.flush(); }
 }
+// Online: the socket opens on the login screen, so you log in before choosing a hero.
 class WsNet {
-  connect(join, onMsg) {
+  open(onMsg, onOpen) {
     const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
-    showConn('Connecting to the realm…', false);
     this.ws = new WebSocket(url);
-    this.ws.onopen = () => { hideConn(); this.ws.send(JSON.stringify(join)); };
+    this.ws.onopen = () => { hideConn(); onOpen(); };
     this.ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } onMsg(m); };
-    this.ws.onclose = () => { if (S.mode === 'game' || S.mode === 'joining') showConn('The connection to the server was lost. If the server sleeps when nobody plays, it can take up to a minute to wake up.', true); };
+    this.ws.onclose = () => {
+      if (S.mode === 'kicked') return;
+      if (S.mode === 'game' || S.mode === 'joining') showConn('The connection to the server was lost. If the server sleeps when nobody plays, it can take up to a minute to wake up.', true);
+      else { showConn('Waking up the server… This can take up to a minute the first time.', false); setTimeout(() => this.open(onMsg, onOpen), 3000); }
+    };
     this.ws.onerror = () => {};
   }
+  connect(join) { this.send(join); }
   send(m) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); }
 }
 function showConn(msg, btn) { $('conn').hidden = false; $('connmsg').textContent = msg; $('connbtn').hidden = !btn; }
@@ -150,30 +155,74 @@ function buildLogin() {
     box.appendChild(b);
   }
   const sv = $('saved'); sv.innerHTML = '';
-  for (const c of chars()) {
+  const loggedIn = !ONLINE || !!S.account;
+  for (const id of ['classes', 'joinrow', 'saved']) $(id).hidden = !loggedIn;
+  const heroes = ONLINE ? (S.account?.heroes || []) : chars();
+  for (const c of heroes) {
+    const w = document.createElement('span'); w.className = 'savewrap';
     const b = document.createElement('button'); b.className = 'btn ghost savebtn'; b.style.setProperty('--cc', CLASSES[c.cls]?.color || '#fff');
     b.innerHTML = `Continue <b>${esc(c.name)}</b> <span style="color:var(--ash)">level ${c.lvl || 1} ${CLASSES[c.cls]?.name || ''}</span>`;
-    b.onclick = () => startGame(c.name, c.cls, c.token, c.save);
-    sv.appendChild(b);
+    b.onclick = () => (ONLINE ? startGame(c.name, c.cls, null, null, c.id) : startGame(c.name, c.cls, c.token, c.save));
+    w.appendChild(b);
+    if (ONLINE) {
+      const del = document.createElement('button'); del.className = 'del'; del.textContent = '×'; del.title = `Delete ${c.name}`;
+      del.onclick = () => {
+        if (!del.classList.contains('arm')) { del.classList.add('arm'); del.textContent = 'Delete?'; setTimeout(() => { del.classList.remove('arm'); del.textContent = '×'; }, 3000); return; }
+        net.send({ t: 'delhero', id: c.id });
+      };
+      w.appendChild(del);
+    }
+    sv.appendChild(w);
+  }
+  if (ONLINE) {
+    $('acct').hidden = false;
+    $('acctform').hidden = !!S.account; $('accthead').hidden = !S.account;
+    if (S.account) $('acc-name').textContent = S.account.user;
   }
   $('loginnote').innerHTML = ONLINE
-    ? 'You are on an <b>online server</b>. Everyone who opens this address plays in the same world. Your hero is saved on the server and in this browser.'
+    ? (S.account ? 'Everyone who opens this address plays in the same world. Your heroes are saved on the server under your account, so you can play from any computer.' : 'Log in or create a free account. Your heroes are saved on the server, so you can play from any computer and never lose them.')
     : 'This is the <b>solo realm</b>: the whole world runs in your browser. Your hero is saved in this browser. To play together with friends, run the online server version.';
 }
 $('play').onclick = () => {
   const name = $('name').value.trim() || ['Ash', 'Brann', 'Kestrel', 'Morrow', 'Sable', 'Wren'][Math.floor(Math.random() * 6)];
   startGame(name, pickedClass, null, null);
 };
+// ---- accounts (online only)
+const SESSION_KEY = 'duskhold.session';
+function acctMsg(t, err) { $('acctmsg').textContent = t || ''; $('acctmsg').className = err ? 'err' : ''; }
+function sendAuth(a) {
+  const user = $('acc-user').value.trim(), pass = $('acc-pass').value;
+  if (!user || !pass) { acctMsg('Type an account name and a password.', true); return; }
+  // heroes from before accounts existed come along into the account
+  const old = chars().filter((c) => c.save).map((c) => ({ name: c.name, cls: c.cls, save: c.save }));
+  for (const h of Object.values(store.get('duskhold.backup.' + user.toLowerCase(), {}))) if (!old.some((o) => o.name === h.name)) old.push(h);
+  S.importing = old.length > 0;
+  acctMsg(a === 'register' ? 'Creating your account…' : 'Logging in…');
+  net.send({ t: 'auth', a, user, pass, import: old });
+}
+if (ONLINE) {
+  $('acc-login').onclick = () => { initAudio(); sfx.click(); sendAuth('login'); };
+  $('acc-new').onclick = () => { initAudio(); sfx.click(); sendAuth('register'); };
+  $('acc-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('acc-login').click(); });
+  $('acc-out').onclick = () => { const s = store.get(SESSION_KEY, null); net.send({ t: 'logout', session: s?.session }); store.set(SESSION_KEY, null); S.account = null; acctMsg(''); buildLogin(); };
+  net = new WsNet();
+  showConn('Connecting to the realm…', false);
+  net.open(onMessage, () => {
+    const s = store.get(SESSION_KEY, null);
+    if (S.account && s) net.send({ t: 'auth', a: 'resume', user: s.user, session: s.session });
+    else if (s && s.session) { acctMsg('Logging in…'); net.send({ t: 'auth', a: 'resume', user: s.user, session: s.session }); }
+  });
+}
 $('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('play').click(); });
 
-function startGame(name, cls, token, save) {
+function startGame(name, cls, token, save, heroId) {
   initAudio(); sfx.click();
   S.name = name; S.cls = cls; S.token = token || (ONLINE ? null : randomToken());
   S.mode = 'joining';
   $('login').hidden = true; $('hud').hidden = false;
   buildHotbar(); buildPathGrid();
-  net = ONLINE ? new WsNet() : new LocalNet();
-  net.connect({ t: 'join', name, cls, token: S.token, save }, onMessage);
+  if (ONLINE) net.connect(heroId ? { t: 'join', hero: heroId } : { t: 'join', name, cls });
+  else { net = new LocalNet(); net.connect({ t: 'join', name, cls, token: S.token, save }, onMessage); }
 }
 
 // ================================================================ entities
@@ -283,8 +332,25 @@ function onMessage(m) {
       addChat(null, ONLINE ? 'Welcome to Duskhold. Everyone in this realm is a real player.' : 'Welcome to Duskhold. Press H for controls.', 'sys');
       return;
     }
-    case 'token': S.token = m.token; saveChar({ name: S.name, cls: S.cls }); return;
-    case 'save': saveChar({ save: m.d, lvl: m.d.lvl }); return;
+    case 'token': if (!ONLINE) { S.token = m.token; saveChar({ name: S.name, cls: S.cls }); } return;
+    case 'save':
+      if (!ONLINE) saveChar({ save: m.d, lvl: m.d.lvl });
+      else if (S.account) { const k = 'duskhold.backup.' + S.account.user.toLowerCase(); const b = store.get(k, {}); b[S.name] = { name: S.name, cls: S.cls, save: m.d }; store.set(k, b); }
+      return;
+    case 'authok': {
+      S.account = { user: m.user, heroes: m.heroes, admin: m.admin };
+      if (m.session) store.set(SESSION_KEY, { user: m.user, session: m.session });
+      if (S.importing) { store.set(CHAR_KEY, []); S.importing = false; }
+      acctMsg(''); $('acc-pass').value = '';
+      if (S.mode === 'login') buildLogin();
+      return;
+    }
+    case 'autherr':
+      if (m.expired) { store.set(SESSION_KEY, null); acctMsg('Please log in again.'); return; }
+      if (S.mode === 'joining') { showConn(m.m, true); return; }
+      acctMsg(m.m, true); sfx.error(); return;
+    case 'heroes': if (S.account) { S.account.heroes = m.heroes; buildLogin(); } return;
+    case 'kicked': S.mode = 'kicked'; showConn(m.m, true); return;
     case 'full': showConn(`The server is full (${m.max} players). Try again in a bit.`, true); return;
     case 'inv': {
       const prev = S.inv; S.inv = m;
@@ -699,7 +765,7 @@ window.addEventListener('keydown', (e) => {
   if (S.mode !== 'game') return;
   const chatin = $('chatin');
   if (document.activeElement === chatin) {
-    if (e.key === 'Enter') { const t = chatin.value.trim(); if (t) send({ t: 'chat', m: t }); chatin.value = ''; chatin.blur(); chatin.hidden = true; $('chathint').hidden = false; e.preventDefault(); }
+    if (e.key === 'Enter') { const t = chatin.value.trim(); if (t && !(t.startsWith('/') && chatCommand(t))) send({ t: 'chat', m: t }); chatin.value = ''; chatin.blur(); chatin.hidden = true; $('chathint').hidden = false; e.preventDefault(); }
     if (e.key === 'Escape') { chatin.value = ''; chatin.blur(); chatin.hidden = true; $('chathint').hidden = false; }
     return;
   }
@@ -1171,6 +1237,7 @@ function renderHelp() {
   $('opt-sound').textContent = `Sound: ${settings.sound ? 'on' : 'off'}`;
   $('opt-music').textContent = `Music: ${settings.music ? 'on' : 'off'}`;
   $('opt-shadow').textContent = `Graphics: ${settings.quality === 'low' ? 'fast' : 'high'}`;
+  $('opt-chat').textContent = `Player chat: ${settings.chat ? 'on' : 'off'}`;
 }
 $('opt-sound').onclick = () => { settings.sound = !settings.sound; setSound(settings.sound); store.set('duskhold.settings', settings); renderHelp(); };
 $('opt-music').onclick = () => { settings.music = !settings.music; setMusic(settings.music); store.set('duskhold.settings', settings); renderHelp(); };
@@ -1181,12 +1248,26 @@ $('opt-shadow').onclick = () => {
   store.set('duskhold.settings', settings); renderHelp();
 };
 $('opt-logout').onclick = () => location.reload();
+$('opt-chat').onclick = () => { settings.chat = !settings.chat; store.set('duskhold.settings', settings); renderHelp(); };
 
 // chat, toasts, banner
+const blocked = new Set(store.get('duskhold.blocked', []));
+function chatCommand(t) {
+  const [cmd, ...rest] = t.split(/\s+/); const who = rest.join(' ').trim(); const k = who.toLowerCase();
+  if (cmd === '/block' && who) { blocked.add(k); store.set('duskhold.blocked', [...blocked]); addChat(null, `You will no longer see chat from ${who}. Type /unblock ${who} to undo.`, 'sys'); return true; }
+  if (cmd === '/unblock' && who) { blocked.delete(k); store.set('duskhold.blocked', [...blocked]); addChat(null, `You will see chat from ${who} again.`, 'sys'); return true; }
+  if (cmd === '/blocked') { addChat(null, blocked.size ? `Blocked: ${[...blocked].join(', ')}` : 'You have not blocked anyone.', 'sys'); return true; }
+  return false;
+}
 function addChat(who, text, cls, wcls, color) {
+  if (who && (blocked.has(String(who).toLowerCase()) || !settings.chat)) return;
   const log = $('chatlog');
   const d = document.createElement('div'); if (cls) d.className = cls;
-  if (who) { const w = document.createElement('span'); w.className = 'who'; w.style.color = CLASSES[wcls]?.color || '#fff'; w.textContent = who + ': '; d.appendChild(w); }
+  if (who) {
+    const w = document.createElement('span'); w.className = 'who'; w.style.color = CLASSES[wcls]?.color || '#fff'; w.textContent = who + ': ';
+    if (who !== S.name) { w.title = `Click to block ${who}`; w.onclick = () => { const ci = $('chatin'); ci.hidden = false; $('chathint').hidden = true; ci.value = `/block ${who}`; ci.focus(); }; }
+    d.appendChild(w);
+  }
   if (color) { const pre = text.split(': '); d.append(pre[0] + ': '); const b = document.createElement('b'); b.style.color = color; b.textContent = pre.slice(1).join(': '); d.appendChild(b); }
   else d.append(text);
   log.appendChild(d);

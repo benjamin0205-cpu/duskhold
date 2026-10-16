@@ -37,6 +37,24 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const num = (v, f = 0) => (typeof v === 'number' && isFinite(v) ? v : f);
 export function xpNeed(l) { return Math.floor(100 * Math.pow(l, 1.55) * (l > 10 ? 1 + (l - 10) * 0.25 : 1)); }
 
+// ---------------------------------------------------------------- chat filter
+// Rude words (English and Danish) are starred out in chat and in names.
+// Short words only match on their own, so "cocktail" or "spike" stay untouched.
+const BAD_WORDS = ['fuck', 'fucking', 'fucker', 'motherfucker', 'shit', 'bitch', 'cunt', 'asshole', 'bastard', 'slut', 'whore', 'nigger', 'nigga', 'faggot', 'retard', 'wanker', 'twat',
+  'dick', 'cock', 'cum', 'porn', 'penis', 'vagina', 'pussy', 'rape', 'nazi',
+  'fisse', 'kusse', 'kælling', 'kaelling', 'luder', 'røvhul', 'rovhul', 'perker', 'neger', 'spasser', 'mongol', 'bøsserøv', 'pikhoved', 'pik', 'lort', 'skide', 'hore', 'idiot', 'klaphat'];
+const LEET = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', '$': 's', '!': 'i' };
+const norm = (w) => w.toLowerCase().replace(/[013457@$!]/g, (c) => LEET[c]).replace(/(.)\1+/g, '$1');
+const BAD_LONG = BAD_WORDS.filter((w) => w.length >= 5).map(norm), BAD_SHORT = new Set(BAD_WORDS.filter((w) => w.length < 5).map(norm));
+export function cleanText(s) {
+  return String(s).replace(/[\p{L}\p{N}@$!]+/gu, (w) => {
+    const n = norm(w);
+    if (BAD_SHORT.has(n) || BAD_LONG.some((b) => n.includes(b))) return '*'.repeat(w.length);
+    return w;
+  });
+}
+export const isClean = (s) => cleanText(s) === String(s);
+
 // ---------------------------------------------------------------- zones
 export const ZONES = {
   town:   { name: 'Duskhold', sub: 'Sanctuary', lv: null, safe: true },
@@ -1018,6 +1036,7 @@ export class Game {
   addPlayer({ name, cls, save }) {
     if (!CLASS_LIST.includes(cls)) cls = 'warrior';
     name = String(name || '').replace(/[^\p{L}\p{N} _'-]/gu, '').trim().slice(0, 16) || 'Wanderer';
+    if (!isClean(name)) name = 'Wanderer';
     const taken = new Set([...this.players.values()].map((p) => p.name.toLowerCase()));
     let nm = name, k = 2; while (taken.has(nm.toLowerCase())) nm = `${name.slice(0, 14)}${k++}`;
     const s = sanitizeSave(save, cls);
@@ -1092,8 +1111,13 @@ export class Game {
       case 'leave': case 'stairs': return this.useStairs(p);
       case 'quest': return this.questAction(p, m.a, m.q);
       case 'chat': {
-        const text = String(m.m || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 160);
+        let text = String(m.m || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 160);
         if (!text) return;
+        // no spamming: at most 4 messages in 8 seconds, and not the same line over and over
+        const now = this.now; p.chatT = (p.chatT || []).filter((t) => now - t < 8);
+        if (p.chatT.length >= 4 || (text === p.lastChat && now - (p.lastChatT || -99) < 10)) return this.note(p, 'Slow down a little before chatting again.', 'warn');
+        p.chatT.push(now); p.lastChat = text; p.lastChatT = now;
+        text = cleanText(text);
         for (const o of this.players.values()) this.to(o.id, { t: 'c', n: p.name, c: p.cls, m: text });
         return;
       }

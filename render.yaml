@@ -6,3 +6,5 @@ services:
     buildCommand: npm install --omit=dev
     startCommand: npm start
     healthCheckPath: /health
+    # Accounts are kept in a database when DATABASE_URL is set (Render dashboard > Environment).
+    # See README.md, "Gem heltene for altid".
